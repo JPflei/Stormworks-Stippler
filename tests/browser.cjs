@@ -99,6 +99,25 @@ const http = require('node:http');
         if(blobIndex===result.blobs.length-1||result.blobs[blobIndex+1].color!==current)exhausted&&=nodes.every((_,tile)=>!Number.isFinite(score(tile)));
       }
       const small=growSeededCanvas(nodes,neighbors,spacings,[2,2,2],rng(),repulsion);
+      const strict=growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,1);
+      const weighted=growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,0.65);
+      function frontierExcess(run){
+        const paint=run.initialColors.slice(),reserved=new Set();let excess=0,steps=0;
+        for(const blob of run.blobs){paint[blob.tile]=blob.color;reserved.add(blob.tile);
+          for(const [from,to] of blob.growthEdges){
+            const seen=new Set([blob.tile]),queue=[blob.tile],frontier=new Set();
+            for(let head=0;head<queue.length;head++)for(const next of neighbors[queue[head]]){
+              if(paint[next]===blob.color&&!seen.has(next)){seen.add(next);queue.push(next);}
+              else if(paint[next]!==blob.color&&!reserved.has(next))frontier.add(next);
+            }
+            const closest=Math.min(...[...frontier].map(tile=>distance(blob.tile,tile)));
+            excess+=distance(blob.tile,to)-closest;steps++;paint[to]=blob.color;
+          }
+        }
+        return {excess,mean:excess/steps,steps};
+      }
+      const randomGrowth=frontierExcess(result),weightedGrowth=frontierExcess(weighted),strictGrowth=frontierExcess(strict);
+      let strictnessRejected=false;try{growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,1.01);}catch{strictnessRejected=true;}
       const mean=blobs=>blobs.reduce((sum,b)=>sum+b.generated,0)/blobs.length;
       const overgrown=growSeededCanvas(nodes,neighbors,[6],[2],()=>0.5,2);
       let zeroRejected=false;try{growSeededCanvas(nodes,neighbors,[0],[12],rng());}catch{zeroRejected=true;}
@@ -111,6 +130,10 @@ const http = require('node:http');
         oversizedStops:overgrown.blobs.length===1&&overgrown.blobs[0].generated===1&&overgrown.blobs[0].connectedSize===400,
         finite:result.seeds.length<=nodes.length,exhausted,
         repeatable:JSON.stringify(result)===JSON.stringify(growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion)),
+        zeroStrictnessUnchanged:JSON.stringify(result)===JSON.stringify(growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,0)),
+        strictAlwaysNearest:strictGrowth.steps>0&&strictGrowth.excess===0,
+        intermediateFavorsNear:weightedGrowth.mean<randomGrowth.mean,
+        strictnessRejected,
         zeroRejected};
     });
     for(const [name,passed] of Object.entries(advancedChecks)) assert.equal(passed,true,name);
@@ -207,14 +230,17 @@ const http = require('node:http');
     await page.locator('#frequency-controls input[data-index]').first().fill('6');
     await page.locator('.color-grouping').first().fill('28');
     await page.locator('#seed-repulsion').fill('4');
+    await page.locator('#growth-strictness').fill('0.75');
     await page.locator('#blob-outliers').fill('3');
     assert.equal(await page.locator('.frequency-share').first().textContent(),'tiles');
     await page.locator('[data-palette="1"] .palette-title').click();
     assert.equal(await page.locator('.color-grouping').first().inputValue(),'24');
+    assert.equal(await page.locator('#growth-strictness').inputValue(),'0');
     await page.reload();await page.locator('#mode').selectOption('replace');
     await page.locator('[data-palette="0"] .palette-title').click();
     assert.equal(await page.locator('.color-grouping').first().inputValue(),'28');
     assert.equal(await page.locator('#seed-repulsion').inputValue(),'4');
+    assert.equal(await page.locator('#growth-strictness').inputValue(),'0.75');
     assert.equal(await page.locator('#blob-outliers').inputValue(),'3');
     assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'6');
     await page.locator('#file').setInputFiles({name:'slice.xml',mimeType:'application/xml',buffer:Buffer.from(source)});
