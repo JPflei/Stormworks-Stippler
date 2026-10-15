@@ -85,7 +85,17 @@ const http = require('node:http');
       const share=independent.filter(o=>o.color==='112233').length/independent.length;
       let zeroRejected=false;try{stippleVehicle(source,0,42,{...options,weights:[0,0]});}catch{zeroRejected=true;}
       const excluded=read(stippleVehicle(source,0,42,{...options,weights:[0,10],groupingSize:8}).xml);
+      const longer=vehicle(Array.from({length:4096},(_,x)=>`<c><o bc="808080"><vp x="${x}"/></o></c>`));
+      const colorList=xml=>[...new DOMParser().parseFromString(xml,'application/xml').querySelectorAll('o')].map(o=>o.getAttribute('bc'));
+      const small=colorList(stippleVehicle(longer,0,42,{...options,weights:[10,10],groupingSizes:[2,2]}).xml);
+      const mixedOptions={...options,weights:[10,10],groupingSizes:[16,2]};
+      const mixed=stippleVehicle(longer,0,42,mixedOptions),mixedColors=colorList(mixed.xml);
+      const sameNeighbor=colors=>{let same=0,total=0;for(let i=1;i<colors.length;i++)if(colors[i-1]==='112233'){total++;if(colors[i]==='112233')same++;}return same/total;};
+      const mixedShare=mixedColors.filter(c=>c==='112233').length/mixedColors.length;
       return {weightedShare:share>0.70 && share<0.80,
+        perColorScale:sameNeighbor(mixedColors)>sameNeighbor(small)+0.03,
+        mixedFrequency:mixedShare>0.4 && mixedShare<0.6,
+        mixedRepeatable:mixed.xml===stippleVehicle(longer,0,42,mixedOptions).xml,
         excluded:excluded.every(o=>o.color==='AABBCC' && o.face==='AABBCC'),
         grouping:grouped.every((o,i)=>o.color===grouped[Math.floor(i/8)*8].color && o.face===o.color),
         moreNeighbors:adjacent(grouped)>adjacent(independent)+0.20,
@@ -185,24 +195,35 @@ const http = require('node:http');
     await page.locator('#mode').selectOption('replace');
     assert.equal(await page.locator('[data-palette="1"] input[type=color]').first().inputValue(),'#abcdef');
     await page.locator('#advanced-options').evaluate(element=>element.open=true);
-    await page.locator('#frequency-controls input').first().fill('30');
-    await page.locator('#frequency-controls input').nth(1).fill('10');
-    await page.locator('#grouping-size').fill('8');
+    await page.locator('#frequency-controls input[data-index]').first().fill('30');
+    await page.locator('#frequency-controls input[data-index]').nth(1).fill('10');
+    await page.locator('.color-grouping').first().fill('8');
+    await page.locator('.color-grouping').nth(1).fill('2');
     assert.equal(await page.locator('.frequency-share').first().textContent(),'75.0%');
     await page.locator('[data-palette="1"] .palette-title').click();
-    assert.equal(await page.locator('#grouping-size').inputValue(),'1');
-    await page.locator('#grouping-size').fill('3');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'1');
+    await page.locator('.color-grouping').first().fill('3');
     await page.reload();
     await page.locator('#mode').selectOption('replace');
-    assert.equal(await page.locator('#grouping-size').inputValue(),'3');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'3');
     await page.locator('[data-palette="0"] .palette-title').click();
-    assert.equal(await page.locator('#grouping-size').inputValue(),'8');
-    assert.equal(await page.locator('#frequency-controls input').first().inputValue(),'30');
-    assert.equal(await page.locator('#frequency-controls input').nth(1).inputValue(),'10');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'8');
+    assert.equal(await page.locator('.color-grouping').nth(1).inputValue(),'2');
+    assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'30');
+    assert.equal(await page.locator('#frequency-controls input[data-index]').nth(1).inputValue(),'10');
     await page.locator('[data-palette="0"] .remove-color').first().click();
-    assert.equal(await page.locator('#frequency-controls input').first().inputValue(),'10');
+    assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'10');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'2');
     await page.setViewportSize({width:375,height:800});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth), 'Mobile palette layout fits viewport');
+    await page.evaluate(()=>{
+      const key='stormworks-stippler.palettes.v1',saved=JSON.parse(localStorage.getItem(key));
+      saved.colors[0]='#112233, #445566';saved.active=0;saved.advanced[0]={weights:[9,1],groupingSize:6};
+      localStorage.setItem(key,JSON.stringify(saved));
+    });
+    await page.reload();await page.locator('#mode').selectOption('replace');
+    assert.deepEqual(await page.locator('.color-grouping').evaluateAll(inputs=>inputs.map(i=>i.value)),['6','6']);
+    assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'9');
     assert.deepEqual(errors, []);
     console.log('Browser replacement mode, preview, download, variance and preservation checks passed.');
   } finally {
