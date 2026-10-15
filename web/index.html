@@ -9,7 +9,7 @@
 <style>
 .palette{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.color-card{min-width:0}.swatch{height:42px;border:1px solid #ffffff30;border-radius:6px;margin:10px 0}.mosaic{display:grid;grid-template-columns:repeat(8,1fr);border:1px solid #ffffff30;border-radius:6px;overflow:hidden;margin:10px 0}.mosaic span{aspect-ratio:1}.color-card p{font-size:12px;margin:4px 0}.color-card code{font-size:13px}#preview h2{font-size:20px;margin:0}#preview-note{font-size:13px}@media(max-width:450px){.palette{gap:8px}form{padding:18px}}
 select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inherit;border:1px solid #516875;border-radius:8px;min-width:0;width:100%;box-sizing:border-box}#replacement{display:grid;gap:18px}.add-color{display:flex;align-items:center;gap:12px}.add-color input{height:42px;width:60px}.add-color button{font-size:14px;padding:10px}
-.target-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-size:12px;text-align:left}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}.final-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}.final-pair .mosaic{grid-template-columns:repeat(16,1fr)}#final-preview h2{font-size:20px}#final-preview p{font-size:13px}
+.target-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-size:12px;text-align:left}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}#final-after{grid-template-columns:repeat(16,1fr);max-width:320px}#final-preview h2{font-size:20px}#final-preview p{font-size:13px}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -33,8 +33,8 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <div id="palette" class="palette"></div>
 <section id="final-preview" hidden aria-label="Final replacement preview">
 <h2>Final paint preview</h2>
-<p>Before and after samples from the same paint fields, including colors left unchanged. Tile layout is illustrative, not the vehicle’s shape. Rare colors may not appear.</p>
-<div class="final-pair"><div><p>Original palette</p><div id="final-before" class="mosaic" role="img" aria-label="Original paint sample"></div></div><div><p>After replacement + variance</p><div id="final-after" class="mosaic" role="img" aria-label="Final paint sample"></div></div></div>
+<p>Sample output shades, including colors left unchanged. Tile layout is illustrative, not the vehicle’s shape. Rare colors may not appear.</p>
+<div id="final-after" class="mosaic" role="img" aria-label="Final paint sample"></div>
 <p id="final-summary"></p>
 </section>
 </section>
@@ -143,7 +143,7 @@ const label=document.createElement('span');label.textContent='#'+item.color+' ·
 choice.addEventListener('click',()=>{target.value=item.color;target.dispatchEvent(new Event('input',{bubbles:true}));});list.append(choice);}
 }
 function renderFinalPreview(data){
-for(const [id,index] of [['final-before',0],['final-after',1]]){const fragment=document.createDocumentFragment();for(const sample of data.final_preview){const tile=document.createElement('span');tile.style.backgroundColor='#'+sample[index];tile.title='#'+sample[index];fragment.append(tile);}document.querySelector('#'+id).replaceChildren(fragment);}
+for(const [id,index] of [['final-after',1]]){const fragment=document.createDocumentFragment();for(const sample of data.final_preview){const tile=document.createElement('span');tile.style.backgroundColor='#'+sample[index];tile.title='#'+sample[index];fragment.append(tile);}document.querySelector('#'+id).replaceChildren(fragment);}
 document.querySelector('#final-summary').textContent=data.changed_fields.toLocaleString()+' changed paint fields / '+data.matched_fields.toLocaleString()+' matching fields / '+data.paint_fields.toLocaleString()+' total fields.';
 document.querySelector('#final-preview').hidden=mode.value!=='replace';
 }
