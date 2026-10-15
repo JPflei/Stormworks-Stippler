@@ -10,8 +10,20 @@ Strength is the maximum random offset per RGB channel (0–50). Each painted obj
 
 After upload, a preview shows the three most common paint colors with their original swatches and a grid of sample output shades. It updates with strength and seed. Ranking counts supported paint-color occurrences, including individual face colors, rather than visible surface area. The tiles sample colors from the actual conversion; their arrangement is illustrative and does not reproduce vehicle geometry or game lighting.
 
+Choose **Replace one paint color** to select any supported color found in the uploaded creation. Enter one or more replacement colors as comma-separated hex values, or use the color picker and **Add color**. Each matching object randomly selects a replacement with equal probability per palette entry and applies the shade variation; matching base, accent, and face colors on that object stay consistent. Exact matches are case-insensitive. Other colors remain unchanged. Strength 0 uses the replacement colors exactly. The selected color appears first in the preview, followed by common unchanged colors. The same seed and settings reproduce the result. This mode is available in the browser interface; the separate Python API remains the all-color variation converter.
+
+Every source color has a clickable swatch beside its hex code and occurrence count. Replacement mode also shows a final before/after mosaic sampled from the same paint fields, so you can see the replacement shades mixed with unchanged colors. Samples reflect actual conversion values, not vehicle geometry; rare colors may be absent from the sample. The previous preview stays visible until the next valid result is ready.
+
 The format adapter handles six-digit hexadecimal `bc`, `ac`, `bc2`, and `bc3` paint attributes and `sc` face-color lists on `<o>` elements within a `<vehicle>` document. Face-list markers are preserved. It preserves other XML text, including comments, whitespace, and declarations. A file with no supported colors produces an error. Unsupported attribute formats remain unchanged. Validated against the supplied Medium Tank XML for paint changes and preservation of non-paint data; an in-game import check is still needed. Keep a backup of your creation.
 
 Run tests with `python3 -m unittest discover -s tests -v`.
+
+Browser regression checks require Playwright and Chromium: run `node tests/browser.cjs`. Set `CHROMIUM_PATH` if using a system Chromium installation instead of Playwright's bundled browser.
+
+## Live website
+
+The GitHub Pages workflow in `.github/workflows/pages.yml` tests the converters and deploys only the static `web/` directory on every push to `main`. It can also be run manually from the Actions tab. No backend, API keys, or upload storage are needed; XML files stay in the visitor's browser.
+
+One-time repository setup: open **Settings → Pages**, then set **Source** to **GitHub Actions**. After the workflow completes, the expected website address is `https://jpflei.github.io/Stormworks-Stippler/`. The deployment job reports the actual URL. If the repository is private, GitHub Pages availability depends on the account plan.
 
 The server binds to loopback by default. For a cloud host that provides its own authenticated port access, use `python3 server.py --host 0.0.0.0`. Do not expose it directly to the public internet.
