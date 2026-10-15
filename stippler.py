@@ -7,11 +7,11 @@ import xml.etree.ElementTree as ET
 
 TAG = re.compile(r'<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"\']|"[^"]*"|\'[^\']*\')*>')
 PAINT = re.compile(r'''(?P<prefix>\s(?P<name>sc|bc|ac|bc2|bc3)\s*=\s*)(?P<quote>["'])(?P<color>[^"']*)(?P=quote)''')
-HEX = re.compile(r'[0-9a-fA-F]{6}\Z')
+HEX = re.compile(r'[0-9a-fA-F]{1,6}\Z')
 
 
 def supported_colors(name, value):
-    if HEX.fullmatch(value):
+    if HEX.fullmatch(value) and (name != 'sc' or len(value) == 6):
         return [value], 0
     parts = value.split(',')
     if name == 'sc' and parts[0].isdigit() and len(parts) > 1 and all(HEX.fullmatch(p) for p in parts[1:]):
@@ -55,7 +55,7 @@ def vary_xml(source, strength=12, seed=0):
                 return paint.group()
             for index in range(start, len(parts)):
                 matched += 1
-                color = parts[index]
+                color = parts[index].zfill(6)
                 channels = [int(color[i:i + 2], 16) for i in (0, 2, 4)]
                 result = ''.join(f'{max(0, min(255, c + offset)):02X}' for c in channels)
                 counts[color.upper()] += 1

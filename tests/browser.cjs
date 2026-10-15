@@ -48,6 +48,17 @@ const assert = require('node:assert/strict');
         noPreviewCap:stippleVehicle(more,12,42,{selectedColors:['111111','222222','333333','444444']}).preview.length===4};
     }, source);
     for(const [name,passed] of Object.entries(selectionChecks)) assert.equal(passed,true,name);
+    const shortHexChecks = await page.evaluate(() => {
+      const source = '<vehicle><o bc="E232" ac="00e232" sc="2,E232,454545"/><o bc="0" sc="6"/></vehicle>';
+      const scan = stippleVehicle(source, 0);
+      const vary = stippleVehicle(source, 12, 42, {selectedColors:['00E232']});
+      const replace = stippleVehicle(source, 0, 42, {mode:'replace', target:'00E232', replacements:['123456']});
+      return {scan:scan.colors.find(c=>c.color==='00E232').count===3 && scan.xml===source,
+        selected:vary.changed_fields===3 && vary.preview.length===1,
+        replaced:replace.matched_fields===3 && replace.xml.includes('bc="123456" ac="123456" sc="2,123456,454545"'),
+        marker:replace.xml.includes('bc="0" sc="6"')};
+    });
+    for(const [name,passed] of Object.entries(shortHexChecks)) assert.equal(passed,true,name);
     await page.locator('#file').setInputFiles({name:'example.xml', mimeType:'application/xml', buffer:Buffer.from(source)});
     await page.waitForFunction(() => document.querySelectorAll('#vary-colors input').length === 3);
     assert.equal(await page.locator('#vary-colors input:checked').count(),0);

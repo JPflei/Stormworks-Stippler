@@ -8,6 +8,19 @@ SAMPLE = '''<?xml version="1.0"?>
 
 
 class StipplerTests(unittest.TestCase):
+    def test_omitted_leading_zero_colors(self):
+        source = '<vehicle><o bc="E232" ac="00e232" sc="2,E232,454545"/><o bc="0" sc="6"/></vehicle>'
+        output, report = vary_xml(source, 0)
+        self.assertEqual(output, source)
+        self.assertEqual(report['paint_fields'], 5)
+        self.assertEqual(report['preview'][0]['color'], '00E232')
+        self.assertEqual(report['preview'][0]['count'], 3)
+        output, _ = vary_xml(source, 12, 1)
+        root = ET.fromstring(output)
+        self.assertEqual(root[0].attrib['bc'], root[0].attrib['ac'])
+        self.assertEqual(root[0].attrib['sc'].split(',')[0], '2')
+        self.assertEqual(root[1].attrib['sc'], '6')
+
     def test_changes_only_paint(self):
         output, report = vary_xml(SAMPLE, 12, 1)
         self.assertEqual({k: report[k] for k in ('objects', 'paint_fields', 'changed_fields')}, {'objects': 1, 'paint_fields': 2, 'changed_fields': 2})

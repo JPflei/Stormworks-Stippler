@@ -66,9 +66,9 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const paint = /([\s](sc|bc|ac|bc2|bc3)\s*=\s*)(["'])([^"']*)\3/g;
   const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
   function colors(name, value) {
-    if (hex.test(value)) return {parts: [value], start: 0};
+    if ((name !== 'sc' ? /^[0-9a-f]{1,6}$/i.test(value) : hex.test(value))) return {parts: [value], start: 0};
     const parts = value.split(',');
-    if (name === 'sc' && /^\d+$/.test(parts[0]) && parts.length > 1 && parts.slice(1).every(p => hex.test(p))) return {parts, start: 1};
+    if (name === 'sc' && /^\d+$/.test(parts[0]) && parts.length > 1 && parts.slice(1).every(p => /^[0-9a-f]{1,6}$/i.test(p))) return {parts, start: 1};
     return null;
   }
   let objects = 0, paint_fields = 0, changed_fields = 0;
@@ -81,7 +81,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     objects++;
     const hasTarget = replacing && matches.some(m => {
       const parsed = colors(m[2], m[4]);
-      return parsed && parsed.parts.slice(parsed.start).some(c => c.toUpperCase() === target);
+      return parsed && parsed.parts.slice(parsed.start).some(c => c.toUpperCase().padStart(6, '0') === target);
     });
     const replacement = hasTarget ? replacements[Math.floor(random() * replacements.length)] : null;
     const offset = Math.floor(random() * (strength * 2 + 1)) - strength;
@@ -90,7 +90,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
       if (!parsed) return all;
       const {parts, start} = parsed;
       for (let i = start; i < parts.length; i++) {
-        const original = parts[i].toUpperCase();
+        const original = parts[i].toUpperCase().padStart(6, '0');
         const matchesTarget = original === target;
         if (replacing && matchesTarget) matched_fields++;
         const base = replacing ? replacement : original;

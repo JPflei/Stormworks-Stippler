@@ -14,7 +14,7 @@ Choose **Replace one paint color** to select any supported color found in the up
 
 Every source color has a clickable swatch beside its hex code and occurrence count. The previous preview stays visible until the next valid result is ready.
 
-The format adapter handles six-digit hexadecimal `bc`, `ac`, `bc2`, and `bc3` paint attributes and `sc` face-color lists on `<o>` elements within a `<vehicle>` document. Face-list markers are preserved. It preserves other XML text, including comments, whitespace, and declarations. A file with no supported colors produces an error. Unsupported attribute formats remain unchanged. Validated against the supplied Medium Tank XML for paint changes and preservation of non-paint data; an in-game import check is still needed. Keep a backup of your creation.
+The format adapter handles one- to six-digit hexadecimal `bc`, `ac`, `bc2`, and `bc3` paint attributes and `sc` face-color lists on `<o>` elements within a `<vehicle>` document. Omitted leading zeros are restored for display and color matching (for example, E232 is #00E232). Unchanged XML values retain their original spelling. Face-list markers are preserved. It preserves other XML text, including comments, whitespace, and declarations. A file with no supported colors produces an error. Unsupported attribute formats remain unchanged. Validated against the supplied Medium Tank XML for paint changes and preservation of non-paint data; an in-game import check is still needed. Keep a backup of your creation.
 
 Run tests with `python3 -m unittest discover -s tests -v`.
 
