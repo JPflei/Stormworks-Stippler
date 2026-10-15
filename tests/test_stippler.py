@@ -8,8 +8,18 @@ SAMPLE = '''<?xml version="1.0"?>
 
 
 class StipplerTests(unittest.TestCase):
+    def test_implicit_faces_randomized_independently(self):
+        source = '<vehicle><o bc="808080" sc="4"/></vehicle>'
+        output, report = vary_xml(source, 30, 42)
+        faces = ET.fromstring(output)[0].attrib['sc'].split(',')
+        self.assertEqual(faces[0], '4')
+        self.assertEqual(len(faces), 5)
+        self.assertGreater(len(set(faces[1:])), 1)
+        self.assertEqual(report['paint_fields'], 5)
+        self.assertEqual(vary_xml(source, 0)[0], source)
+
     def test_omitted_leading_zero_colors(self):
-        source = '<vehicle><o bc="E232" ac="00e232" sc="2,E232,454545"/><o bc="0" sc="6"/></vehicle>'
+        source = '<vehicle><o bc="E232" ac="00e232" sc="2,E232,454545"/><o bc="0" sc="1"/></vehicle>'
         output, report = vary_xml(source, 0)
         self.assertEqual(output, source)
         self.assertEqual(report['paint_fields'], 5)
@@ -17,9 +27,9 @@ class StipplerTests(unittest.TestCase):
         self.assertEqual(report['preview'][0]['count'], 3)
         output, _ = vary_xml(source, 12, 1)
         root = ET.fromstring(output)
-        self.assertEqual(root[0].attrib['bc'], root[0].attrib['ac'])
+        self.assertNotEqual(root[0].attrib['bc'], root[0].attrib['ac'])
         self.assertEqual(root[0].attrib['sc'].split(',')[0], '2')
-        self.assertEqual(root[1].attrib['sc'], '6')
+        self.assertEqual(root[1].attrib['sc'], '1')
 
     def test_changes_only_paint(self):
         output, report = vary_xml(SAMPLE, 12, 1)
@@ -52,9 +62,9 @@ class StipplerTests(unittest.TestCase):
         output, report = vary_xml(source, 12, 1)
         self.assertEqual(report['paint_fields'], 9)
         first, second = ET.fromstring(output)
-        self.assertEqual(first.attrib['bc'], first.attrib['ac'])
+        self.assertNotEqual(first.attrib['bc'], first.attrib['ac'])
         self.assertEqual(first.attrib['sc'].split(',')[0], '6')
-        self.assertEqual(first.attrib['sc'].split(',')[1], first.attrib['bc'])
+        self.assertGreater(len(set(first.attrib['sc'].split(',')[1:])), 1)
         self.assertEqual(second.attrib['sc'], '1')
 
     def test_preview_ranks_colors_and_uses_actual_output_shades(self):
@@ -63,7 +73,7 @@ class StipplerTests(unittest.TestCase):
         self.assertEqual([p['color'] for p in report['preview']], ['808080', 'FFFFFF', '000000'])
         self.assertEqual(report['preview'][0]['count'], 3)
         actual = ET.fromstring(output)[0].attrib['bc']
-        self.assertEqual(set(report['preview'][0]['samples']), {actual})
+        self.assertTrue(set(report['preview'][0]['samples']) <= {ET.fromstring(output)[0].attrib['bc'], ET.fromstring(output)[0].attrib['ac'], ET.fromstring(output)[0].attrib['sc'].split(',')[1]})
         for p in vary_xml(source, 0)[1]['preview']:
             self.assertEqual(set(p['samples']), {p['color']})
 

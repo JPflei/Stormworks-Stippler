@@ -46,16 +46,23 @@ def vary_xml(source, strength=12, seed=0):
         if not re.match(r'<o(?:\s|/?>)', tag) or not any(supported_colors(p['name'], p['color'])[0] for p in PAINT.finditer(tag)):
             return tag
         objects += 1
-        offset = rng.randint(-strength, strength)
 
         def paint_replace(paint):
             nonlocal matched, changed
             parts, start = supported_colors(paint['name'], paint['color'])
+            implicit = False
+            if parts is None and paint['name'] == 'sc' and paint['color'].isdigit() and 2 <= int(paint['color']) <= 64:
+                base = next((p['color'] for p in PAINT.finditer(tag) if p['name'] == 'bc' and HEX.fullmatch(p['color'])), None)
+                if base is not None:
+                    parts, start = [paint['color']] + [base] * int(paint['color']), 1
+                    implicit = True
             if parts is None:
                 return paint.group()
+            attribute_changed = False
             for index in range(start, len(parts)):
                 matched += 1
                 color = parts[index].zfill(6)
+                offset = rng.randint(-strength, strength)
                 channels = [int(color[i:i + 2], 16) for i in (0, 2, 4)]
                 result = ''.join(f'{max(0, min(255, c + offset)):02X}' for c in channels)
                 counts[color.upper()] += 1
@@ -63,6 +70,9 @@ def vary_xml(source, strength=12, seed=0):
                 if result.lower() != color.lower():
                     changed += 1
                     parts[index] = result
+                    attribute_changed = True
+            if implicit and not attribute_changed:
+                return paint.group()
             return paint['prefix'] + paint['quote'] + ','.join(parts) + paint['quote']
 
         return PAINT.sub(paint_replace, tag)

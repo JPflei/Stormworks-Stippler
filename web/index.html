@@ -25,7 +25,7 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <label>Replacement colors (hex, separated by commas)<input id="replacements" type="text" value="#62734D, #988563, #3C4934" spellcheck="false"></label>
 <div id="replacement-cards" class="target-colors" aria-label="Replacement colors"></div>
 <div class="add-color"><input id="color-picker" type="color" value="#62734d" aria-label="Choose a replacement color"><button id="add-color" type="button">Add color</button></div>
-<p>Exact color matches only. Each matching block randomly picks one replacement, shared across its matching faces and accents. All other colors stay unchanged.</p>
+<p>Exact color matches only. Each matching paint slot independently picks a replacement and shade. Faces on the same block can differ. All other colors stay unchanged.</p>
 </section>
 <label>Shade variation <span><output id="amount">12</output> / 50</span><input id="strength" type="range" min="0" max="50" value="12"></label>
 <label>Random seed<input id="seed" type="number" value="0" step="1" min="-2147483648" max="2147483647" required></label>
@@ -79,28 +79,30 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     const matches = [...tag.matchAll(paint)];
     if (!matches.some(m => colors(m[2], m[4]))) return tag;
     objects++;
-    const hasTarget = replacing && matches.some(m => {
-      const parsed = colors(m[2], m[4]);
-      return parsed && parsed.parts.slice(parsed.start).some(c => c.toUpperCase().padStart(6, '0') === target);
-    });
-    const replacement = hasTarget ? replacements[Math.floor(random() * replacements.length)] : null;
-    const offset = Math.floor(random() * (strength * 2 + 1)) - strength;
     return tag.replace(paint, (all, prefix, name, quote, value) => {
-      const parsed = colors(name, value);
+      let parsed = colors(name, value);
+      if (!parsed && name === 'sc' && /^\d+$/.test(value) && Number(value) >= 2 && Number(value) <= 64) {
+        const baseMatch = matches.find(m => m[2] === 'bc' && colors('bc', m[4]));
+        if (baseMatch) parsed = {parts:[value, ...Array(Number(value)).fill(baseMatch[4])], start:1, implicit:true};
+      }
       if (!parsed) return all;
       const {parts, start} = parsed;
+      let attributeChanged = false;
       for (let i = start; i < parts.length; i++) {
         const original = parts[i].toUpperCase().padStart(6, '0');
         const matchesTarget = original === target;
         if (replacing && matchesTarget) matched_fields++;
-        const base = replacing ? replacement : original;
-        const result = (replacing ? !matchesTarget : !selection.has(original)) ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
+        const eligible = replacing ? matchesTarget : selection.has(original);
+        const base = replacing && eligible ? replacements[Math.floor(random() * replacements.length)] : original;
+        const offset = eligible ? Math.floor(random() * (strength * 2 + 1)) - strength : 0;
+        const result = !eligible ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
         paint_fields++;
-        if (result !== original) { changed_fields++; parts[i] = result; }
+        if (result !== original) { changed_fields++; parts[i] = result; attributeChanged = true; }
         if (!counts.has(original)) counts.set(original, {color: original, count: 0, shades: new Map()});
         const entry = counts.get(original); entry.count++;
         entry.shades.set(result, (entry.shades.get(result) || 0) + 1);
       }
+      if (parsed.implicit && !attributeChanged) return all;
       return prefix + quote + parts.join(',') + quote;
     });
   });

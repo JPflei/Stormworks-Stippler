@@ -28,7 +28,7 @@ const assert = require('node:assert/strict');
       return {
         paletteOnly: colors.every(c => replacements.includes(c)),
         randomSelection: new Set(colors).size === 2,
-        sameBlock: first.getAttribute('bc') === first.getAttribute('ac') && first.getAttribute('sc') === '2,' + first.getAttribute('bc') + ',FFFFFF',
+        perSlot: [first.getAttribute('bc'),first.getAttribute('ac'),first.getAttribute('sc').split(',')[1]].every(c=>replacements.includes(c)) && first.getAttribute('sc').endsWith(',FFFFFF'),
         untouched: parsed.querySelectorAll('o')[1].getAttribute('ac') === '123456' && first.getAttribute('other') === 'stay' && result.xml.includes('<!-- keep -->'),
         repeatable: varied.xml === stippleVehicle(source, 12, 42, options).xml,
         previewMatches: result.preview[0].color === '808080' && result.preview[0].samples.every(c => replacements.includes(c)),
@@ -37,6 +37,20 @@ const assert = require('node:assert/strict');
       };
     }, source);
     for (const [name, passed] of Object.entries(checks)) assert.equal(passed, true, name);
+    const faceChecks = await page.evaluate(() => {
+      const source='<vehicle><o bc="808080" sc="4"/><o bc="808080" sc="4,808080,808080,808080,123456"/></vehicle>';
+      const vary=stippleVehicle(source,30,42,{selectedColors:['808080']});
+      const replace=stippleVehicle(source,0,42,{mode:'replace',target:'808080',replacements:['112233','AABBCC']});
+      const parse=x=>[...new DOMParser().parseFromString(x,'application/xml').querySelectorAll('o')].map(o=>o.getAttribute('sc').split(','));
+      const vs=parse(vary.xml),rs=parse(replace.xml);
+      return {implicitExpanded:vs[0][0]==='4' && vs[0].length===5,
+        independentShades:new Set(vs[0].slice(1)).size>1,
+        independentReplacements:new Set(rs[0].slice(1)).size>1,
+        unselectedFace:vs[1][4]==='123456' && rs[1][4]==='123456',
+        zeroUnchanged:stippleVehicle(source,0,42,{selectedColors:['808080']}).xml===source};
+    });
+    for(const [name,passed] of Object.entries(faceChecks)) assert.equal(passed,true,name);
+
     const selectionChecks = await page.evaluate(source => {
       const untouched = stippleVehicle(source, 12, 42);
       const selected = stippleVehicle(source, 12, 42, {selectedColors:['808080']});
