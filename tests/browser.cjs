@@ -182,6 +182,18 @@ const http = require('node:http');
     await setPaletteColors('#225588, #AA7733');
     await page.locator('#strength').fill('0');
     await page.waitForFunction(() => document.querySelectorAll('.color-card').length === 3 && [...document.querySelector('.mosaic').children].every(e => ['#225588','#AA7733'].includes(e.title)));
+    assert.equal(await page.locator('.simulation-mosaic span').count(),2500);
+    assert.equal(await page.locator('.simulation-mosaic').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),50);
+    const simulationChecks=await page.evaluate(()=>{
+      const options={mode:'replace',target:'808080',replacements:['112233','AABBCC','778899'],seedSpacings:[6,6,6],groupingSizes:[12,12,12],seedRepulsion:2,growthStrictness:0.65,outliers:0};
+      const simulation=simulateReplacementGrid(0,42,options),nodes=Array.from({length:2500},(_,i)=>({xyz:[i%50,Math.floor(i/50),0]}));
+      const neighbors=nodes.map((_,i)=>[i%50?i-1:-1,i%50<49?i+1:-1,i>=50?i-50:-1,i<2450?i+50:-1].filter(i=>i>=0));
+      let state=42;const random=()=>{state+=0x6D2B79F5;let t=Math.imul(state^state>>>15,1|state);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296;};
+      const grown=growSeededCanvas(nodes,neighbors,options.seedSpacings,options.groupingSizes,random,options.seedRepulsion,options.growthStrictness),expected=[];
+      for(let y=49;y>=0;y--)for(let x=0;x<50;x++)expected.push(options.replacements[grown.colors[y*50+x]]);
+      return {matchesGrowth:JSON.stringify(expected)===JSON.stringify(simulation.samples),repeatable:JSON.stringify(simulation)===JSON.stringify(simulateReplacementGrid(0,42,options)),includesBlobs:new Set(simulation.samples).size>1};
+    });
+    for(const [name,passed] of Object.entries(simulationChecks))assert.equal(passed,true,name);
     await page.locator('.target-choice[data-color="FFFFFF"]').click();
     assert.equal(await page.locator('#target').inputValue(), 'FFFFFF');
     assert.equal(await page.locator('.target-choice[data-color="FFFFFF"]').getAttribute('aria-pressed'), 'true');

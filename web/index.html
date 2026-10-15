@@ -17,6 +17,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 @media(min-width:1000px){body{max-width:1440px;margin:32px auto}form{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:32px;align-items:start}.preview-panel{border-top:0;padding-top:0;border-left:1px solid #354a55;padding-left:32px}body>p{max-width:780px}}
 .replacement-mosaic{grid-template-columns:repeat(30,minmax(0,1fr));grid-template-rows:repeat(30,minmax(0,1fr));aspect-ratio:1}.replacement-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
 #tile-map-preview{display:grid;gap:12px;min-width:0}#tile-map-preview p{font-size:13px}#tile-canvas{width:100%;height:auto;display:block;border:1px solid #354a55;border-radius:8px;box-sizing:border-box}.slice-controls{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.simulation-mosaic{grid-template-columns:repeat(50,minmax(0,1fr));grid-template-rows:repeat(50,minmax(0,1fr));aspect-ratio:1}.simulation-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -350,7 +351,7 @@ renderReplacementCards();savePalettes();
 let paletteFile;
 const selectedColors=new Set();
 function conversionOptions(){normalizeAdvanced(activePalette);return {growthStrictness:savedAdvanced[activePalette].growthStrictness,seedRepulsion:savedAdvanced[activePalette].seedRepulsion,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview-note').textContent=mode.value==='replace'?'The 50×50 canvas simulates the same growth algorithm, palette, spacing, size, strictness, seed, outliers, and shade variance. Vehicle geometry can change the result; inspect actual paint layers below.':'Tiles sample shades for the selected colors; they do not show block positions or in-game lighting.';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderVaryColors(colors){
 const list=document.querySelector('#vary-colors');list.replaceChildren();
 for(const item of colors){const label=document.createElement('label');label.className='target-choice';label.style.cursor='pointer';
@@ -430,17 +431,26 @@ choice.addEventListener('click',()=>{target.value=item.color;target.dispatchEven
 }
 document.querySelector('#add-color').addEventListener('click',()=>{replacements.value=replacements.value.trim() ? replacements.value.replace(/,\s*$/, '')+', #808080' : '#808080';replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 async function readFile(selected){if(cachedFile!==selected){cachedFile=selected;cachedText=selected.text();}return cachedText;}
+let simulationTemplate=null;
+function simulateReplacementGrid(strength,seed,options){
+if(!simulationTemplate){const blocks=[];for(let y=0;y<50;y++)for(let x=0;x<50;x++)blocks.push('<c><o bc="__TARGET__"><vp x="'+x+'" y="'+y+'"/></o></c>');simulationTemplate='<vehicle><bodies><body unique_id="simulation"><components>'+blocks.join('')+'</components></body></bodies></vehicle>';}
+const result=stippleVehicle(simulationTemplate.replaceAll('__TARGET__',options.target),strength,seed,options);
+const map=result.tileMap[0],lookup=new Map(map.tiles.map(tile=>[tile.xyz[0]+','+tile.xyz[1],tile.color])),samples=[];
+for(let y=49;y>=0;y--)for(let x=0;x<50;x++)samples.push(lookup.get(x+','+y));
+return {samples,seeds:map.seeds,blobs:map.blobs};
+}
 function renderPreview(colors){
 palette.replaceChildren();
 for(const item of colors){
 const card=document.createElement('div');card.className='color-card';
+const simulation=mode.value==='replace'&&item===colors[0]?simulateReplacementGrid(Number(strength.value),Number(seed.value),conversionOptions()):null;
 const name=document.createElement('code');name.textContent='#'+item.color;
 const count=document.createElement('p');count.textContent=item.count.toLocaleString()+' occurrences';
 const originalLabel=document.createElement('p');originalLabel.textContent='Original';
 const original=document.createElement('div');original.className='swatch';original.style.backgroundColor='#'+item.color;original.setAttribute('aria-label','Original color #'+item.color);
-const label=document.createElement('p');label.textContent='With variation';
-const mosaic=document.createElement('div');mosaic.className='mosaic'+(item.samples.length===900?' replacement-mosaic':'');mosaic.setAttribute('role','img');mosaic.setAttribute('aria-label','Sample varied shades of #'+item.color);
-for(const color of item.samples){const tile=document.createElement('span');tile.style.backgroundColor='#'+color;tile.title='#'+color;mosaic.append(tile);}
+const label=document.createElement('p');label.textContent=simulation?'50×50 growth simulation':mode.value==='replace'?'Unchanged':'With variation';
+const mosaic=document.createElement('div');mosaic.className='mosaic'+(simulation?' simulation-mosaic':item.samples.length===900?' replacement-mosaic':'');mosaic.setAttribute('role','img');mosaic.setAttribute('aria-label',simulation?'50 by 50 grid simulation using the export growth algorithm':'Sample varied shades of #'+item.color);
+for(const color of simulation?simulation.samples:item.samples){const tile=document.createElement('span');tile.style.backgroundColor='#'+color;tile.title='#'+color;mosaic.append(tile);}
 card.append(name,count,originalLabel,original,label,mosaic);palette.append(card);
 }}
 let currentPaintMap=[];
