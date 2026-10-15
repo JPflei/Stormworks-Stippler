@@ -344,14 +344,17 @@ let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
 const paletteSelect=document.querySelector('#palette-select');
 const paletteStorageKey='stormworks-stippler.seed-growth-palettes.v1';
-const paletteNames=['Desert camo','Woods camo','Arctic camo'];
+const defaultPaletteNames=['Desert camo','Woods camo','Arctic camo'];
+let paletteNames=defaultPaletteNames.slice();
+function defaultAdvanced(){return {weights:[],groupingSizes:[],strictnesses:[],directions:[],seedRepulsion:2,outliers:5,growthStrictness:0.5};}
 const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
 let savedPalettes=defaultPalettes.slice(),activePalette=0;
-let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSizes:[],strictnesses:[],directions:[],seedRepulsion:2,outliers:5,growthStrictness:0.5}));
+let savedAdvanced=Array.from({length:3},defaultAdvanced);
 try{
 const blobSettings=JSON.parse(localStorage.getItem(paletteStorageKey));
 const stored=blobSettings || JSON.parse(localStorage.getItem('stormworks-stippler.blob-palettes.v1')) || JSON.parse(localStorage.getItem('stormworks-stippler.palettes.v1'));
 if(stored && Array.isArray(stored.colors) && stored.colors.length===3 && stored.colors.every(c=>typeof c==='string' && c.length<=10000)){
+if(Array.isArray(stored.names))paletteNames=defaultPaletteNames.map((name,i)=>typeof stored.names[i]==='string'&&stored.names[i].trim()?stored.names[i].trim().slice(0,60):name);
 savedPalettes=stored.colors.map((colors,index)=>colors==='#62734D, #988563, #3C4934'?defaultPalettes[index]:colors);
 if(blobSettings && Array.isArray(stored.advanced) && stored.advanced.length===3){
 savedAdvanced=stored.advanced.map(value=>({
@@ -371,7 +374,7 @@ if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)active
 paletteSelect.value=String(activePalette);replacements.value=savedPalettes[activePalette];
 function savePalettes(){
 savedPalettes[activePalette]=replacements.value;
-try{localStorage.setItem(paletteStorageKey,JSON.stringify({model:'seed-growth-v1',colors:savedPalettes,active:activePalette,advanced:savedAdvanced}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
+try{localStorage.setItem(paletteStorageKey,JSON.stringify({model:'seed-growth-v1',names:paletteNames,colors:savedPalettes,active:activePalette,advanced:savedAdvanced}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
 catch{document.querySelector('#palette-storage').textContent='Browser storage is unavailable. Your palettes will last for this session only.';}
 }
 paletteSelect.addEventListener('input',()=>{
@@ -400,6 +403,13 @@ const column=document.createElement('section');column.className='palette-column'
 const title=document.createElement('button');title.type='button';title.className='palette-title';title.textContent=paletteNames[paletteIndex];title.setAttribute('aria-pressed',String(paletteIndex===activePalette));
 title.addEventListener('click',()=>{paletteSelect.value=String(paletteIndex);paletteSelect.dispatchEvent(new Event('input',{bubbles:true}));});
 column.append(title);
+const rename=document.createElement('input');rename.type='text';rename.className='palette-name';rename.maxLength=60;rename.value=paletteNames[paletteIndex];rename.setAttribute('aria-label','Name of Palette '+(paletteIndex+1));rename.style.cssText='width:100%;min-width:0;box-sizing:border-box;padding:8px;background:#10191e;color:inherit;border:1px solid #516875;border-radius:6px';
+rename.addEventListener('input',event=>{event.stopPropagation();paletteNames[paletteIndex]=rename.value.trim()||defaultPaletteNames[paletteIndex];title.textContent=paletteNames[paletteIndex];paletteSelect.options[paletteIndex].textContent=paletteNames[paletteIndex];document.querySelector('#add-color').textContent='Add color to '+paletteNames[activePalette];document.querySelector('#advanced-palette').textContent='Settings for '+paletteNames[activePalette];savePalettes();});
+rename.addEventListener('change',()=>{rename.value=paletteNames[paletteIndex];});rename.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();rename.blur();}});
+const reset=document.createElement('button');reset.type='button';reset.className='reset-palette';reset.textContent='Reset to default';reset.setAttribute('aria-label','Reset Palette '+(paletteIndex+1)+' to default');reset.style.cssText='padding:8px;font-size:12px;background:#354a55;color:#e9f1f2';
+reset.addEventListener('click',()=>{savedPalettes[paletteIndex]=defaultPalettes[paletteIndex];paletteNames[paletteIndex]=defaultPaletteNames[paletteIndex];savedAdvanced[paletteIndex]=defaultAdvanced();normalizeAdvanced(paletteIndex);if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();if(paletteIndex===activePalette)replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+column.append(rename,reset);
+paletteSelect.options[paletteIndex].textContent=paletteNames[paletteIndex];
 const entries=savedPalettes[paletteIndex].split(',').map(c=>c.trim()).filter(Boolean);
 entries.forEach((color,index)=>{const card=document.createElement('div');card.className='target-choice palette-swatch';if(index===0)card.dataset.base='true';
 const normalized=color.replace(/^#/,'').toUpperCase();const valid=/^[0-9A-F]{6}$/.test(normalized);
