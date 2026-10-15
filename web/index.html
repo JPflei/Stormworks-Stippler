@@ -41,7 +41,8 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <p id="advanced-palette"></p>
 <p>The first color fills the canvas (with shade variance). Remaining colors grow in palette order. Move colors up or down to choose the base and layering order. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables an overlay color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
 
-<p>Each color has its own strictness and polar direction chart (body-local X/Y). Click or drag the tip: the center uses 100% seed distance; the rim uses 100% direction, equally at every angle. Intermediate radii blend both. Strictness controls how closely growth follows that blend; at 1 only the best candidates grow. Arrow keys adjust the vector; Home resets it.</p>
+<p>Each color has its own strictness and polar direction chart (axes from the splat-plane setting). Click or drag the tip: the center uses 100% seed distance; the rim uses 100% direction, equally at every angle. Intermediate radii blend both. Strictness controls how closely growth follows that blend; at 1 only the best candidates grow. Arrow keys adjust the vector; Home resets it.</p>
+<label>Splat plane on vehicle<select id="growth-plane"><option value="xz">X / Z (top view)</option><option value="xy">X / Y</option><option value="yz">Y / Z</option></select></label>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
 <label>Outliers: <output id="outliers-value">5%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="5"></label>
 <div id="frequency-controls"></div>
@@ -77,7 +78,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <script>
 function normalizeGrowthVector(v){const scale=Math.max(1,Math.hypot(v.x,v.y));return {x:v.x/scale,y:v.y/scale};}
 /* Finite graph growth. Edges describe orthogonal paint-tile adjacency. */
-function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion = 2, strictness = 0, directions = []) {
+function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion = 2, strictness = 0, directions = [], plane = [0,1]) {
   if((Array.isArray(strictness)?strictness:[strictness]).some(value=>!Number.isFinite(value)||value<0||value>1))throw new Error('Growth strictness must be between 0 and 1.');
   const n=nodes.length, infinity=2147483647;
   const enabled=spacings.map((value,color)=>color>0&&value>0?color:-1).filter(color=>color>=0);
@@ -135,7 +136,7 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
             const origin=nodes[tile].xyz,candidates=[...frontier];
             const metrics=candidates.map(candidate=>{
               const point=nodes[candidate].xyz;
-              const dx=origin&&point?point[0]-origin[0]:0,dy=origin&&point?point[1]-origin[1]:0;
+              const dx=origin&&point?point[plane[0]]-origin[plane[0]]:0,dy=origin&&point?point[plane[1]]-origin[plane[1]]:0;
               const radius=Math.min(1,Math.hypot(direction.x,direction.y)),length=Math.hypot(dx,dy);
               const alignment=radius&&length?(dx*direction.x+dy*direction.y)/(Math.hypot(direction.x,direction.y)*length):0;
               // Radius blends pure seed distance with pure directional alignment.
@@ -227,6 +228,8 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   if (replacing && (!Array.isArray(groupingSizes) || groupingSizes.length !== replacements.length || groupingSizes.some(g=>!Number.isInteger(g)||g<1||g>512))) throw new Error('Blob size must be a whole number from 1 to 512 connected tiles.');
   const outliers=options.outliers??5,repulsion=options.seedRepulsion??2,strictness=options.growthStrictnesses??options.growthStrictness??0.5;
   if(replacing&&((Array.isArray(strictness)&&strictness.length!==replacements.length)||(Array.isArray(strictness)?strictness:[strictness]).some(value=>!Number.isFinite(value)||value<0||value>1)))throw new Error('Growth strictness must be between 0 and 1.');
+  const growthPlane=options.growthPlane??'xz',plane={xy:[0,1],xz:[0,2],yz:[1,2]}[growthPlane];
+  if(replacing&&!plane)throw new Error('Choose a valid splat plane.');
   const directions=options.growthDirections??replacements.map(()=>({x:0,y:0}));
   if(replacing&&(!Array.isArray(directions)||directions.length!==replacements.length||directions.some(v=>!v||!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x< -1||v.x>1||v.y< -1||v.y>1)))throw new Error('Growth vectors require x from -1 to 1 and y from -1 to 1.');
   if(replacing&&(!Number.isFinite(outliers)||outliers<0||outliers>10))throw new Error('Outliers must be between 0 and 10 percent.');
@@ -261,7 +264,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
       const nodes=[...tiles.values()].sort((a,b)=>{if(a.xyz&&b.xyz)return a.xyz[2]-b.xyz[2]||a.xyz[1]-b.xyz[1]||a.xyz[0]-b.xyz[0];return a.key<b.key?-1:a.key>b.key?1:0;});
       const ids=new Map(nodes.map((node,index)=>[node.key,index]));
       const neighbors=nodes.map(node=>{const result=[];if(node.xyz)for(let axis=0;axis<3;axis++)for(const step of [-1,1]){const xyz=node.xyz.slice();xyz[axis]+=step;const index=ids.get(xyz.join(','));if(index!==undefined)result.push(index);}return result;});
-      const generated=growSeededCanvas(nodes,neighbors,weights,groupingSizes,random,repulsion,strictness,directions);
+      const generated=growSeededCanvas(nodes,neighbors,weights,groupingSizes,random,repulsion,strictness,directions,plane);
       const anchors=new Map(generated.seeds.map(anchor=>[anchor.tile,anchor.color]));
       for(const group of graph.layers.filter(group=>group.body===body)){
         group.seeds=generated.seeds;group.blobs=generated.blobs;
@@ -346,7 +349,7 @@ const paletteSelect=document.querySelector('#palette-select');
 const paletteStorageKey='stormworks-stippler.seed-growth-palettes.v1';
 const defaultPaletteNames=['Desert camo','Woods camo','Arctic camo'];
 let paletteNames=defaultPaletteNames.slice();
-function defaultAdvanced(){return {weights:[],groupingSizes:[],strictnesses:[],directions:[],seedRepulsion:2,outliers:5,growthStrictness:0.5};}
+function defaultAdvanced(){return {weights:[],groupingSizes:[],strictnesses:[],directions:[],growthPlane:'xz',seedRepulsion:2,outliers:5,growthStrictness:0.5};}
 const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
 let savedPalettes=defaultPalettes.slice(),activePalette=0;
 let savedAdvanced=Array.from({length:3},defaultAdvanced);
@@ -362,6 +365,7 @@ weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&
 groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=512?g:10):[],
 strictnesses:Array.isArray(value?.strictnesses)?value.strictnesses.map(v=>Number.isFinite(v)&&v>=0&&v<=1?v:0.5):[],
 directions:Array.isArray(value?.directions)?value.directions.map(v=>v&&Number.isFinite(v.x)&&Number.isFinite(v.y)&&v.x>=-1&&v.x<=1&&v.y>=-1&&v.y<=1?normalizeGrowthVector(v):{x:0,y:0}):[],
+growthPlane:['xy','xz','yz'].includes(value?.growthPlane)?value.growthPlane:'xz',
 seedRepulsion:Number.isFinite(value?.seedRepulsion)&&value.seedRepulsion>=0&&value.seedRepulsion<=10?value.seedRepulsion:2,
 growthStrictness:Number.isFinite(value?.growthStrictness)&&value.growthStrictness>=0&&value.growthStrictness<=1?value.growthStrictness:0.5,
 outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:5,
@@ -384,8 +388,8 @@ renderReplacementCards();savePalettes();
 });
 let paletteFile;
 const selectedColors=new Set();
-function conversionOptions(){normalizeAdvanced(activePalette);return {growthStrictnesses:savedAdvanced[activePalette].strictnesses.slice(),growthDirections:savedAdvanced[activePalette].directions.map(v=>({...v})),seedRepulsion:savedAdvanced[activePalette].seedRepulsion,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview-note').textContent=mode.value==='replace'?'The 50×50 canvas simulates the same growth algorithm, palette, spacing, size, strictness, seed, outliers, and shade variance. Vehicle geometry can change the result. Click Replace selected paint to generate the actual paint layers.':'Tiles sample shades for the selected colors; they do not show block positions or in-game lighting.';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function conversionOptions(){normalizeAdvanced(activePalette);return {growthPlane:savedAdvanced[activePalette].growthPlane,growthStrictnesses:savedAdvanced[activePalette].strictnesses.slice(),growthDirections:savedAdvanced[activePalette].directions.map(v=>({...v})),seedRepulsion:savedAdvanced[activePalette].seedRepulsion,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview-note').textContent=mode.value==='replace'?'The canvas displays the central 50×50 tiles of an 80×80 simulation using the same growth algorithm, palette, spacing, size, strictness, seed, outliers, and shade variance. Vehicle geometry can change the result. Click Replace selected paint to generate the actual paint layers.':'Tiles sample shades for the selected colors; they do not show block positions or in-game lighting.';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderVaryColors(colors){
 const list=document.querySelector('#vary-colors');list.replaceChildren();
 for(const item of colors){const label=document.createElement('label');label.className='target-choice';label.style.cursor='pointer';
@@ -449,6 +453,7 @@ normalizeAdvanced(activePalette);
 document.querySelector('#advanced-palette').textContent='Settings for '+paletteNames[activePalette];
 const list=document.querySelector('#frequency-controls');list.replaceChildren();
 const entries=savedPalettes[activePalette].split(',').map(c=>c.trim()).filter(Boolean);
+document.querySelector('#growth-plane').value=savedAdvanced[activePalette].growthPlane;
 document.querySelector('#seed-repulsion').value=String(savedAdvanced[activePalette].seedRepulsion);
 document.querySelector('#blob-outliers').value=String(savedAdvanced[activePalette].outliers);document.querySelector('#outliers-value').textContent=savedAdvanced[activePalette].outliers+'%';
 entries.forEach((color,index)=>{const row=document.createElement('div');row.className='frequency-row';
@@ -473,6 +478,7 @@ chart.addEventListener('pointerdown',event=>{if(index===0)return;event.preventDe
 chart.addEventListener('keydown',event=>{const v={...savedAdvanced[activePalette].directions[index]},step=event.shiftKey?0.1:0.02;if(event.key==='Home'){v.x=0;v.y=0;}else if(event.key==='ArrowLeft')v.x-=step;else if(event.key==='ArrowRight')v.x+=step;else if(event.key==='ArrowUp')v.y+=step;else if(event.key==='ArrowDown')v.y-=step;else return;event.preventDefault();setVector(v);});draw();row.append(chart,caption);list.append(row);});updateFrequencySummary();
 }
 
+document.querySelector('#growth-plane').addEventListener('input',event=>{savedAdvanced[activePalette].growthPlane=event.target.value;savePalettes();});
 document.querySelector('#seed-repulsion').addEventListener('input',event=>{const value=Number(event.target.value);savedAdvanced[activePalette].seedRepulsion=Number.isFinite(value)?Math.max(0,Math.min(10,value)):2;savePalettes();});
 document.querySelector('#blob-outliers').addEventListener('input',event=>{savedAdvanced[activePalette].outliers=Number(event.target.value);document.querySelector('#outliers-value').textContent=event.target.value+'%';savePalettes();});
 replacements.addEventListener('input',()=>{renderReplacementCards();savePalettes();});
@@ -488,10 +494,10 @@ document.querySelector('#add-color').addEventListener('click',()=>{replacements.
 async function readFile(selected){if(cachedFile!==selected){cachedFile=selected;cachedText=selected.text();}return cachedText;}
 let simulationTemplate=null;
 function simulateReplacementGrid(strength,seed,options){
-if(!simulationTemplate){const blocks=[];for(let y=0;y<50;y++)for(let x=0;x<50;x++)blocks.push('<c><o bc="__TARGET__"><vp x="'+x+'" y="'+y+'"/></o></c>');simulationTemplate='<vehicle><bodies><body unique_id="simulation"><components>'+blocks.join('')+'</components></body></bodies></vehicle>';}
-const result=stippleVehicle(simulationTemplate.replaceAll('__TARGET__',options.target),strength,seed,options);
+if(!simulationTemplate){const blocks=[];for(let y=0;y<80;y++)for(let x=0;x<80;x++)blocks.push('<c><o bc="__TARGET__"><vp x="'+x+'" y="'+y+'"/></o></c>');simulationTemplate='<vehicle><bodies><body unique_id="simulation"><components>'+blocks.join('')+'</components></body></bodies></vehicle>';}
+const result=stippleVehicle(simulationTemplate.replaceAll('__TARGET__',options.target),strength,seed,{...options,growthPlane:'xy',includeTileMap:true});
 const map=result.tileMap[0],lookup=new Map(map.tiles.map(tile=>[tile.xyz[0]+','+tile.xyz[1],tile.color])),samples=[];
-for(let y=49;y>=0;y--)for(let x=0;x<50;x++)samples.push(lookup.get(x+','+y));
+for(let y=64;y>=15;y--)for(let x=15;x<65;x++)samples.push(lookup.get(x+','+y));
 return {samples,seeds:map.seeds,blobs:map.blobs};
 }
 function renderPreview(colors){

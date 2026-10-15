@@ -158,6 +158,11 @@ const http = require('node:http');
       return displacement(1)>0&&displacement(-1)<0&&displacement(1,1)>displacement(0,1)+20&&displacement(-1,1)<displacement(0,1)-20;
     });
     assert.equal(directionalChecks,true,'Vectors bias growth in opposite directions and strictness follows the directed metric');
+    assert.equal(await page.evaluate(()=>{
+      const nodes=Array.from({length:101},(_,z)=>({xyz:[0,0,z]})),neighbors=nodes.map((_,i)=>[i-1,i+1].filter(j=>j>=0&&j<101));
+      const result=growSeededCanvas(nodes,neighbors,[0,100],[20,20],()=>0.5,2,[0,1],[{x:0,y:0},{x:0,y:1}],[0,2]);
+      return result.blobs[0].growthEdges.every(([,to])=>nodes[to].xyz[2]>nodes[result.blobs[0].tile].xyz[2]);
+    }),true,'Vertical splat follows body Z on the X/Z plane');
 
     const selectionChecks = await page.evaluate(source => {
       const untouched = stippleVehicle(source, 12, 42);
@@ -210,11 +215,11 @@ const http = require('node:http');
     assert.equal(await page.locator('.simulation-mosaic').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),50);
     const simulationChecks=await page.evaluate(()=>{
       const options={mode:'replace',target:'808080',replacements:['112233','AABBCC','778899'],seedSpacings:[6,6,6],groupingSizes:[12,12,12],seedRepulsion:2,growthStrictness:0.65,outliers:0};
-      const simulation=simulateReplacementGrid(0,42,options),nodes=Array.from({length:2500},(_,i)=>({xyz:[i%50,Math.floor(i/50),0]}));
-      const neighbors=nodes.map((_,i)=>[i%50?i-1:-1,i%50<49?i+1:-1,i>=50?i-50:-1,i<2450?i+50:-1].filter(i=>i>=0));
+      const simulation=simulateReplacementGrid(0,42,options),nodes=Array.from({length:6400},(_,i)=>({xyz:[i%80,Math.floor(i/80),0]}));
+      const neighbors=nodes.map((_,i)=>[i%80?i-1:-1,i%80<79?i+1:-1,i>=80?i-80:-1,i<6320?i+80:-1].filter(i=>i>=0));
       let state=42;const random=()=>{state+=0x6D2B79F5;let t=Math.imul(state^state>>>15,1|state);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296;};
       const grown=growSeededCanvas(nodes,neighbors,options.seedSpacings,options.groupingSizes,random,options.seedRepulsion,options.growthStrictness),expected=[];
-      for(let y=49;y>=0;y--)for(let x=0;x<50;x++)expected.push(options.replacements[grown.colors[y*50+x]]);
+      for(let y=64;y>=15;y--)for(let x=15;x<65;x++)expected.push(options.replacements[grown.colors[y*80+x]]);
       return {matchesGrowth:JSON.stringify(expected)===JSON.stringify(simulation.samples),repeatable:JSON.stringify(simulation)===JSON.stringify(simulateReplacementGrid(0,42,options)),includesBlobs:new Set(simulation.samples).size>1};
     });
     for(const [name,passed] of Object.entries(simulationChecks))assert.equal(passed,true,name);
@@ -270,6 +275,7 @@ const http = require('node:http');
     await page.locator('#seed-repulsion').fill('4');
     await page.locator('.color-strictness').last().fill('0.75');
     await page.locator('#blob-outliers').fill('3');
+    await page.locator('#growth-plane').selectOption('yz');
     assert.equal(await page.locator('.frequency-share').first().textContent(),'Base');
     assert.ok(await page.locator('.color-grouping').first().isDisabled());
     assert.ok(await page.locator('#frequency-controls input[data-index]').first().isDisabled());
@@ -282,6 +288,7 @@ const http = require('node:http');
     assert.equal(await page.locator('#seed-repulsion').inputValue(),'4');
     assert.equal(await page.locator('.color-strictness').last().inputValue(),'0.75');
     assert.equal(await page.locator('#blob-outliers').inputValue(),'3');
+    assert.equal(await page.locator('#growth-plane').inputValue(),'yz');
     await page.locator('#advanced-options').evaluate(element=>element.open=true);
     const chart=page.locator('.splat-chart').last();await chart.scrollIntoViewIfNeeded();
     const chartBounds=await chart.boundingBox();await page.mouse.click(chartBounds.x+chartBounds.width-3,chartBounds.y+3);
