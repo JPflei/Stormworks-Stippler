@@ -4,13 +4,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Stormworks Stippler</title>
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10191e;color:#e9f1f2}body{max-width:680px;margin:8vh auto;padding:24px}small{color:#6fe0bc;letter-spacing:.15em}h1{font-size:clamp(32px,7vw,52px);line-height:1.1}p{color:#aec1c9;line-height:1.65}form{background:#1b2a32;border:1px solid #354a55;border-radius:18px;padding:28px;display:grid;gap:24px}label{display:grid;gap:10px}input{font:inherit}input[type=file],input[type=number]{padding:12px;background:#10191e;border:1px solid #516875;border-radius:8px;color:inherit}button,a.download{background:#6fe0bc;color:#10251e;padding:14px 20px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;text-align:center;text-decoration:none}button:disabled{opacity:.5;cursor:wait}[hidden]{display:none!important}#status{white-space:pre-wrap}footer{font-size:13px;margin-top:24px;color:#aec1c9}
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10191e;color:#e9f1f2}body{max-width:680px;margin:8vh auto;padding:24px}small{color:#6fe0bc;letter-spacing:.15em}h1{font-size:clamp(32px,7vw,52px);line-height:1.1}p{color:#aec1c9;line-height:1.65}form{background:#1b2a32;border:1px solid #354a55;border-radius:18px;padding:28px;display:grid;grid-template-columns:minmax(0,1fr);gap:24px}label{display:grid;gap:10px}input{font:inherit}input[type=file],input[type=number]{width:100%;box-sizing:border-box;min-width:0;padding:12px;background:#10191e;border:1px solid #516875;border-radius:8px;color:inherit}button,a.download{background:#6fe0bc;color:#10251e;padding:14px 20px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;text-align:center;text-decoration:none}button:disabled{opacity:.5;cursor:wait}[hidden]{display:none!important}#status{white-space:pre-wrap}footer{font-size:13px;margin-top:24px;color:#aec1c9}
 </style>
 <style>
 .palette{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.color-card{min-width:0}.swatch{height:42px;border:1px solid #ffffff30;border-radius:6px;margin:10px 0}.mosaic{display:grid;grid-template-columns:repeat(8,1fr);border:1px solid #ffffff30;border-radius:6px;overflow:hidden;margin:10px 0}.mosaic span{aspect-ratio:1}.color-card p{font-size:12px;margin:4px 0}.color-card code{font-size:13px}#preview h2{font-size:20px;margin:0}#preview-note{font-size:13px}@media(max-width:450px){.palette{gap:8px}form{padding:18px}}
 select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inherit;border:1px solid #516875;border-radius:8px;min-width:0;width:100%;box-sizing:border-box}#replacement{display:grid;gap:18px}.add-color{display:flex;align-items:center;gap:12px}.add-color input{height:42px;width:60px}.add-color button{font-size:14px;padding:10px}
 .target-colors{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-family:inherit;font-size:12px;font-weight:700;line-height:1.3;text-align:left;border-radius:8px;box-sizing:border-box;min-height:54px;min-width:0}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}
 .remove-color{margin-left:auto;padding:2px 6px;background:transparent;color:#e9f1f2;font-size:20px;line-height:1}.target-choice:has(input:checked){border-color:#6fe0bc}#vary-colors label{display:flex}
+.palette-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.palette-column{display:flex;flex-direction:column;gap:10px;min-width:0}.palette-title{border:2px solid #354a55;background:#10191e;color:#e9f1f2;padding:14px 8px}.palette-title[aria-pressed=true]{border-color:#6fe0bc;color:#6fe0bc}.swatch-editor{display:flex;align-items:center;gap:8px;min-width:0;cursor:pointer;flex:1}.swatch-editor input{width:30px;height:30px;padding:0;border:0;background:transparent;cursor:pointer;flex-shrink:0}.swatch-editor span{font-size:11px;overflow-wrap:anywhere}.palette-column .target-choice{gap:2px;padding:8px}.palette-column .remove-color{padding:2px 4px}@media(max-width:520px){.palette-columns{grid-template-columns:1fr}}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -20,13 +21,13 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <label>Paint mode<select id="mode"><option value="vary">Vary selected paint colors</option><option value="replace">Replace one paint color</option></select></label>
 <section id="vary-selection"><p>Select colors to vary. Unselected paint stays unchanged.</p><div id="vary-colors" class="target-colors" role="group" aria-label="Paint colors to vary"></div></section>
 <section id="replacement" hidden>
-<label>Replacement palette<select id="palette-select"><option value="0">Palette 1</option><option value="1">Palette 2</option><option value="2">Palette 3</option></select></label>
+<select id="palette-select" hidden aria-label="Replacement palette"><option value="0">Palette 1</option><option value="1">Palette 2</option><option value="2">Palette 3</option></select>
 <p id="palette-storage" role="status">Palettes are saved automatically in this browser.</p>
 <label>Color to replace<select id="target"><option value="">Upload a creation first</option></select></label>
 <div id="target-colors" class="target-colors" role="group" aria-label="Choose a paint color to replace"></div>
-<label>Replacement colors (hex, separated by commas)<input id="replacements" type="text" value="#62734D, #988563, #3C4934" spellcheck="false"></label>
-<div id="replacement-cards" class="target-colors" aria-label="Replacement colors"></div>
-<div class="add-color"><input id="color-picker" type="color" value="#62734d" aria-label="Choose a replacement color"><button id="add-color" type="button">Add color</button></div>
+<input id="replacements" type="hidden" value="#62734D, #988563, #3C4934">
+<div id="replacement-cards" class="palette-columns" aria-label="Replacement palettes"></div>
+<button id="add-color" type="button">Add color to Palette 1</button>
 <p>Exact color matches only. Each matching paint slot independently picks a replacement and shade. Faces on the same block can differ. All other colors stay unchanged.</p>
 </section>
 <label>Shade variation <span><output id="amount">12</output> / 50</span><input id="strength" type="range" min="0" max="50" value="12"></label>
@@ -133,11 +134,13 @@ let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
 const paletteSelect=document.querySelector('#palette-select');
 const paletteStorageKey='stormworks-stippler.palettes.v1';
-let savedPalettes=Array(3).fill(replacements.value),activePalette=0;
+const paletteNames=['Desert camo','Woods camo','Arctic camo'];
+const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
+let savedPalettes=defaultPalettes.slice(),activePalette=0;
 try{
 const stored=JSON.parse(localStorage.getItem(paletteStorageKey));
 if(stored && Array.isArray(stored.colors) && stored.colors.length===3 && stored.colors.every(c=>typeof c==='string' && c.length<=10000)){
-savedPalettes=stored.colors.slice();
+savedPalettes=stored.colors.map((colors,index)=>colors==='#62734D, #988563, #3C4934'?defaultPalettes[index]:colors);
 if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)activePalette=stored.active;
 }
 }catch{}
@@ -167,14 +170,27 @@ label.append(checkbox,chip,name);list.append(label);}
 }
 function renderReplacementCards(){
 const list=document.querySelector('#replacement-cards');list.replaceChildren();
-const entries=replacements.value.split(',').map(c=>c.trim()).filter(Boolean);
+savedPalettes[activePalette]=replacements.value;
+for(let paletteIndex=0;paletteIndex<3;paletteIndex++){
+const column=document.createElement('section');column.className='palette-column';column.dataset.palette=String(paletteIndex);
+const title=document.createElement('button');title.type='button';title.className='palette-title';title.textContent=paletteNames[paletteIndex];title.setAttribute('aria-pressed',String(paletteIndex===activePalette));
+title.addEventListener('click',()=>{paletteSelect.value=String(paletteIndex);paletteSelect.dispatchEvent(new Event('input',{bubbles:true}));});
+column.append(title);
+const entries=savedPalettes[paletteIndex].split(',').map(c=>c.trim()).filter(Boolean);
 entries.forEach((color,index)=>{const card=document.createElement('div');card.className='target-choice';
 const normalized=color.replace(/^#/,'').toUpperCase();const valid=/^[0-9A-F]{6}$/.test(normalized);
-const chip=document.createElement('span');chip.className='target-chip';if(valid)chip.style.backgroundColor='#'+normalized;
+const editorLabel=document.createElement('label');editorLabel.className='swatch-editor';
+const editor=document.createElement('input');editor.type='color';editor.value=valid?'#'+normalized:'#808080';editor.setAttribute('aria-label','Edit Palette '+(paletteIndex+1)+' color '+(index+1));
 const name=document.createElement('span');name.textContent=valid?'#'+normalized:color;
-const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove replacement '+name.textContent);
-remove.addEventListener('click',()=>{entries.splice(index,1);replacements.value=entries.join(', ');replacements.dispatchEvent(new Event('input',{bubbles:true}));});
-card.append(chip,name,remove);list.append(card);});
+editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index];savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();});
+editorLabel.append(editor,name);
+const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove Palette '+(paletteIndex+1)+' color '+(index+1));
+remove.addEventListener('click',()=>{entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+card.append(editorLabel,remove);column.append(card);});
+if(!entries.length){const empty=document.createElement('p');empty.textContent='No colors yet';column.append(empty);}
+list.append(column);
+}
+document.querySelector('#add-color').textContent='Add color to '+paletteNames[activePalette];
 }
 replacements.addEventListener('input',()=>{renderReplacementCards();savePalettes();});
 renderReplacementCards();
@@ -185,7 +201,7 @@ const chip=document.createElement('span');chip.className='target-chip';chip.styl
 const label=document.createElement('span');label.textContent='#'+item.color+' · '+item.count.toLocaleString();choice.append(chip,label);
 choice.addEventListener('click',()=>{target.value=item.color;target.dispatchEvent(new Event('input',{bubbles:true}));});list.append(choice);}
 }
-document.querySelector('#add-color').addEventListener('click',()=>{const value=document.querySelector('#color-picker').value.toUpperCase();replacements.value=replacements.value.trim() ? replacements.value.replace(/,\s*$/, '')+', '+value : value;replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+document.querySelector('#add-color').addEventListener('click',()=>{replacements.value=replacements.value.trim() ? replacements.value.replace(/,\s*$/, '')+', #808080' : '#808080';replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 async function readFile(selected){if(cachedFile!==selected){cachedFile=selected;cachedText=selected.text();}return cachedText;}
 function renderPreview(colors){
 palette.replaceChildren();
