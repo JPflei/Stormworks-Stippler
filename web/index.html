@@ -15,6 +15,7 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a55;border-radius:8px;padding:16px}#advanced-options p{font-size:13px}.frequency-row{display:grid;grid-template-columns:30px minmax(70px,1fr) minmax(60px,90px) 48px;align-items:center;gap:8px;margin:10px 0;font-size:12px}.frequency-row input[type=number]{padding:8px}#grouping-size{width:100%}
 .editor-panel,.preview-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;align-content:start;min-width:0}.preview-panel{border-top:1px solid #354a55;padding-top:24px}.palette{grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr))}
 @media(min-width:1000px){body{max-width:1440px;margin:32px auto}form{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:32px;align-items:start}.preview-panel{border-top:0;padding-top:0;border-left:1px solid #354a55;padding-left:32px}body>p{max-width:780px}}
+.replacement-mosaic{grid-template-columns:repeat(30,minmax(0,1fr));grid-template-rows:repeat(30,minmax(0,1fr));aspect-ratio:1}.replacement-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -166,7 +167,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const previewEntries = replacing ? [counts.get(target), ...ranked.filter(e => e.color !== target)].slice(0, 3) : ranked.filter(e => selection.has(e.color));
   const preview = previewEntries.map(entry => {
     const variants = [...entry.shades];
-    const samples = Array.from({length: 64}, () => {
+    const samples = Array.from({length: replacing ? 900 : 64}, () => {
       let target = random() * entry.count;
       for (const [color, count] of variants) { target -= count; if (target < 0) return color; }
       return variants[variants.length - 1][0];
@@ -294,7 +295,7 @@ const count=document.createElement('p');count.textContent=item.count.toLocaleStr
 const originalLabel=document.createElement('p');originalLabel.textContent='Original';
 const original=document.createElement('div');original.className='swatch';original.style.backgroundColor='#'+item.color;original.setAttribute('aria-label','Original color #'+item.color);
 const label=document.createElement('p');label.textContent='With variation';
-const mosaic=document.createElement('div');mosaic.className='mosaic';mosaic.setAttribute('role','img');mosaic.setAttribute('aria-label','Sample varied shades of #'+item.color);
+const mosaic=document.createElement('div');mosaic.className='mosaic'+(item.samples.length===900?' replacement-mosaic':'');mosaic.setAttribute('role','img');mosaic.setAttribute('aria-label','Sample varied shades of #'+item.color);
 for(const color of item.samples){const tile=document.createElement('span');tile.style.backgroundColor='#'+color;tile.title='#'+color;mosaic.append(tile);}
 card.append(name,count,originalLabel,original,label,mosaic);palette.append(card);
 }}
