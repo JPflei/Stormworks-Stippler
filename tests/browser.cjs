@@ -70,6 +70,31 @@ const http = require('node:http');
         zeroUnchanged:stippleVehicle(source,0,42,{selectedColors:['808080']}).xml===source};
     });
     for(const [name,passed] of Object.entries(faceChecks)) assert.equal(passed,true,name);
+    const advancedChecks = await page.evaluate(() => {
+      const components=Array.from({length:1024},(_,x)=>`<c><o bc="808080" sc="2,808080,123456"><vp x="${x}"/></o></c>`);
+      const vehicle=items=>'<vehicle><bodies><body unique_id="5"><components>'+items.join('')+'</components></body></bodies></vehicle>';
+      const source=vehicle(components);
+      const options={mode:'replace',target:'808080',replacements:['112233','AABBCC'],weights:[30,10]};
+      const read=xml=>[...new DOMParser().parseFromString(xml,'application/xml').querySelectorAll('o')].map(o=>({x:Number(o.querySelector('vp').getAttribute('x')),color:o.getAttribute('bc'),face:o.getAttribute('sc').split(',')[1],other:o.getAttribute('sc').split(',')[2]}));
+      const independent=read(stippleVehicle(source,0,42,options).xml);
+      const groupedOptions={...options,weights:[10,10],groupingSize:8};
+      const groupedResult=stippleVehicle(source,0,42,groupedOptions);
+      const grouped=read(groupedResult.xml);
+      const reversed=read(stippleVehicle(vehicle([...components].reverse()),0,42,groupedOptions).xml).sort((a,b)=>a.x-b.x);
+      const adjacent=rows=>rows.slice(1).filter((row,i)=>row.color===rows[i].color).length/(rows.length-1);
+      const share=independent.filter(o=>o.color==='112233').length/independent.length;
+      let zeroRejected=false;try{stippleVehicle(source,0,42,{...options,weights:[0,0]});}catch{zeroRejected=true;}
+      const excluded=read(stippleVehicle(source,0,42,{...options,weights:[0,10],groupingSize:8}).xml);
+      return {weightedShare:share>0.70 && share<0.80,
+        excluded:excluded.every(o=>o.color==='AABBCC' && o.face==='AABBCC'),
+        grouping:grouped.every((o,i)=>o.color===grouped[Math.floor(i/8)*8].color && o.face===o.color),
+        moreNeighbors:adjacent(grouped)>adjacent(independent)+0.20,
+        orderIndependent:JSON.stringify(grouped)===JSON.stringify(reversed),
+        unchangedPaint:grouped.every(o=>o.other==='123456'),
+        repeatable:groupedResult.xml===stippleVehicle(source,0,42,groupedOptions).xml,
+        zeroRejected};
+    });
+    for(const [name,passed] of Object.entries(advancedChecks)) assert.equal(passed,true,name);
 
     const selectionChecks = await page.evaluate(source => {
       const untouched = stippleVehicle(source, 12, 42);
@@ -159,6 +184,23 @@ const http = require('node:http');
     await page.reload();
     await page.locator('#mode').selectOption('replace');
     assert.equal(await page.locator('[data-palette="1"] input[type=color]').first().inputValue(),'#abcdef');
+    await page.locator('#advanced-options').evaluate(element=>element.open=true);
+    await page.locator('#frequency-controls input').first().fill('30');
+    await page.locator('#frequency-controls input').nth(1).fill('10');
+    await page.locator('#grouping-size').fill('8');
+    assert.equal(await page.locator('.frequency-share').first().textContent(),'75.0%');
+    await page.locator('[data-palette="1"] .palette-title').click();
+    assert.equal(await page.locator('#grouping-size').inputValue(),'1');
+    await page.locator('#grouping-size').fill('3');
+    await page.reload();
+    await page.locator('#mode').selectOption('replace');
+    assert.equal(await page.locator('#grouping-size').inputValue(),'3');
+    await page.locator('[data-palette="0"] .palette-title').click();
+    assert.equal(await page.locator('#grouping-size').inputValue(),'8');
+    assert.equal(await page.locator('#frequency-controls input').first().inputValue(),'30');
+    assert.equal(await page.locator('#frequency-controls input').nth(1).inputValue(),'10');
+    await page.locator('[data-palette="0"] .remove-color').first().click();
+    assert.equal(await page.locator('#frequency-controls input').first().inputValue(),'10');
     await page.setViewportSize({width:375,height:800});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth), 'Mobile palette layout fits viewport');
     assert.deepEqual(errors, []);

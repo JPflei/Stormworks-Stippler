@@ -12,6 +12,7 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 .target-colors{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-family:inherit;font-size:12px;font-weight:700;line-height:1.3;text-align:left;border-radius:8px;box-sizing:border-box;min-height:54px;min-width:0}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}
 .remove-color{margin-left:auto;padding:2px 6px;background:transparent;color:#e9f1f2;font-size:20px;line-height:1}.target-choice:has(input:checked){border-color:#6fe0bc}#vary-colors label{display:flex}
 .palette-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.palette-column{display:flex;flex-direction:column;gap:10px;min-width:0}.palette-title{border:2px solid #354a55;background:#10191e;color:#e9f1f2;padding:14px 8px}.palette-title[aria-pressed=true]{border-color:#6fe0bc;color:#6fe0bc}.swatch-editor{display:flex;align-items:center;gap:8px;min-width:0;cursor:pointer;flex:1}.swatch-editor input{width:30px;height:30px;padding:0;border:0;background:transparent;cursor:pointer;flex-shrink:0}.swatch-editor span{font-size:11px;overflow-wrap:anywhere}.palette-column .target-choice{gap:2px;padding:8px}.palette-column .remove-color{padding:2px 4px}@media(max-width:520px){.palette-columns{grid-template-columns:1fr}}
+summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a55;border-radius:8px;padding:16px}#advanced-options p{font-size:13px}.frequency-row{display:grid;grid-template-columns:30px minmax(70px,1fr) minmax(60px,90px) 48px;align-items:center;gap:8px;margin:10px 0;font-size:12px}.frequency-row input[type=number]{padding:8px}#grouping-size{width:100%}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -28,7 +29,16 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <input id="replacements" type="hidden" value="#62734D, #988563, #3C4934">
 <div id="replacement-cards" class="palette-columns" aria-label="Replacement palettes"></div>
 <button id="add-color" type="button">Add color to Palette 1</button>
-<p>Exact color matches only. Each matching paint slot independently picks a replacement and shade. Faces on the same block can differ. All other colors stay unchanged.</p>
+<details id="advanced-options">
+<summary>Advanced options</summary>
+<p id="advanced-palette"></p>
+<label>Grouping size: <output id="grouping-value">1 — independent faces</output><input id="grouping-size" type="range" min="1" max="32" value="1"></label>
+<p>1 randomizes every face independently. Larger sizes create spatial patches in blocks per side, using each body’s local coordinates. Paint slots in one patch share a base color; shade variance still applies independently. Missing positions use independent choices.</p>
+<p>Color frequency: relative weights, not guaranteed percentages. 0 excludes a color; equal weights give equal chances.</p>
+<div id="frequency-controls"></div>
+<p id="frequency-summary" role="status"></p>
+</details>
+<p>Exact color matches only. Matching paint slots use the selected palette’s frequency and grouping settings. Shade variance applies per slot. All other colors stay unchanged.</p>
 </section>
 <label>Shade variation <span><output id="amount">12</output> / 50</span><input id="strength" type="range" min="0" max="50" value="12"></label>
 <label>Random seed<input id="seed" type="number" value="0" step="1" min="-2147483648" max="2147483647" required></label>
@@ -65,7 +75,28 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const target = String(options.target || '').replace(/^#/, '').toUpperCase();
   const replacements = (options.replacements || []).map(c => String(c).trim().replace(/^#/, '').toUpperCase());
   if (replacing && !hex.test(target)) throw new Error('Choose a color from your creation to replace.');
-  if (replacing && (!replacements.length || replacements.some(c => !hex.test(c)))) throw new Error('Enter replacement colors as six-digit hex values, separated by commas (for example #62734D, #988563).');
+  if (replacing && (!replacements.length || replacements.some(c => !hex.test(c)))) throw new Error('Add at least one valid replacement color to the selected palette.');
+  const weights = options.weights === undefined ? replacements.map(() => 10) : options.weights;
+  const groupingSize = options.groupingSize === undefined ? 1 : options.groupingSize;
+  if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100) || !weights.some(w => w > 0))) throw new Error('Set at least one color frequency above 0. Weights must be whole numbers from 0 to 100.');
+  if (replacing && (!Number.isInteger(groupingSize) || groupingSize < 1 || groupingSize > 32)) throw new Error('Grouping size must be a whole number from 1 to 32.');
+  const totalWeight = replacing ? weights.reduce((sum, w) => sum + w, 0) : 0;
+  function weightedColor(value) {
+    let remaining = value * totalWeight;
+    for (let i = 0; i < replacements.length; i++) {remaining -= weights[i]; if (remaining < 0) return replacements[i];}
+    return replacements[weights.findLastIndex(w => w > 0)];
+  }
+  // Coordinate hashing makes patches repeatable regardless of XML component order.
+  function spatialRandom(key) {
+    let hash = 2166136261;
+    for (const char of String(seed) + '|' + key) {hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619);}
+    hash ^= hash >>> 16; hash = Math.imul(hash, 0x7feb352d); hash ^= hash >>> 15;
+    hash = Math.imul(hash, 0x846ca68b); hash ^= hash >>> 16;
+    return (hash >>> 0) / 4294967296;
+  }
+  const objectElements = replacing && groupingSize > 1 ? [...document.getElementsByTagName('o')] : [];
+  const bodies = new Map([...document.getElementsByTagName('body')].map((body, index) => [body, index]));
+  let objectIndex = 0;
   const paint = /([\s](sc|bc|ac|bc2|bc3)\s*=\s*)(["'])([^"']*)\3/g;
   const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
   function colors(name, value) {
@@ -79,6 +110,20 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const counts = new Map();
   const xml = source.replace(tags, tag => {
     if (!/^<o(?:\s|\/?>)/.test(tag)) return tag;
+    const element = objectElements[objectIndex++];
+    let groupChoice = null;
+    if (element) {
+      const position = [...element.children].find(child => child.tagName === 'vp');
+      let body = element.parentElement;
+      while (body && body.tagName !== 'body') body = body.parentElement;
+      if (position) {
+        const xyz = ['x','y','z'].map(axis => Number(position.getAttribute(axis) || 0));
+        if (xyz.every(Number.isFinite)) {
+          const cells = xyz.map(value => Math.floor(value / groupingSize));
+          groupChoice = weightedColor(spatialRandom((body ? body.getAttribute('unique_id') || bodies.get(body) : 'root') + '|' + cells.join(',')));
+        }
+      }
+    }
     const matches = [...tag.matchAll(paint)];
     if (!matches.some(m => colors(m[2], m[4]))) return tag;
     objects++;
@@ -96,7 +141,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
         const matchesTarget = original === target;
         if (replacing && matchesTarget) matched_fields++;
         const eligible = replacing ? matchesTarget : selection.has(original);
-        const base = replacing && eligible ? replacements[Math.floor(random() * replacements.length)] : original;
+        const base = replacing && eligible ? groupChoice || weightedColor(random()) : original;
         const offset = eligible ? Math.floor(random() * (strength * 2 + 1)) - strength : 0;
         const result = !eligible ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
         paint_fields++;
@@ -137,17 +182,21 @@ const paletteStorageKey='stormworks-stippler.palettes.v1';
 const paletteNames=['Desert camo','Woods camo','Arctic camo'];
 const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
 let savedPalettes=defaultPalettes.slice(),activePalette=0;
+let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSize:1}));
 try{
 const stored=JSON.parse(localStorage.getItem(paletteStorageKey));
 if(stored && Array.isArray(stored.colors) && stored.colors.length===3 && stored.colors.every(c=>typeof c==='string' && c.length<=10000)){
 savedPalettes=stored.colors.map((colors,index)=>colors==='#62734D, #988563, #3C4934'?defaultPalettes[index]:colors);
+if(Array.isArray(stored.advanced) && stored.advanced.length===3){
+savedAdvanced=stored.advanced.map(value=>({weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&w>=0&&w<=100?w:10):[],groupingSize:Number.isInteger(value?.groupingSize)&&value.groupingSize>=1&&value.groupingSize<=32?value.groupingSize:1}));
+}
 if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)activePalette=stored.active;
 }
 }catch{}
 paletteSelect.value=String(activePalette);replacements.value=savedPalettes[activePalette];
 function savePalettes(){
 savedPalettes[activePalette]=replacements.value;
-try{localStorage.setItem(paletteStorageKey,JSON.stringify({colors:savedPalettes,active:activePalette}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
+try{localStorage.setItem(paletteStorageKey,JSON.stringify({colors:savedPalettes,active:activePalette,advanced:savedAdvanced}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
 catch{document.querySelector('#palette-storage').textContent='Browser storage is unavailable. Your palettes will last for this session only.';}
 }
 paletteSelect.addEventListener('input',()=>{
@@ -157,7 +206,7 @@ renderReplacementCards();savePalettes();
 });
 let paletteFile;
 const selectedColors=new Set();
-function conversionOptions(){return {mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
+function conversionOptions(){normalizeAdvanced(activePalette);return {weights:savedAdvanced[activePalette].weights.slice(),groupingSize:savedAdvanced[activePalette].groupingSize,mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
 function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderVaryColors(colors){
 const list=document.querySelector('#vary-colors');list.replaceChildren();
@@ -182,16 +231,43 @@ const normalized=color.replace(/^#/,'').toUpperCase();const valid=/^[0-9A-F]{6}$
 const editorLabel=document.createElement('label');editorLabel.className='swatch-editor';
 const editor=document.createElement('input');editor.type='color';editor.value=valid?'#'+normalized:'#808080';editor.setAttribute('aria-label','Edit Palette '+(paletteIndex+1)+' color '+(index+1));
 const name=document.createElement('span');name.textContent=valid?'#'+normalized:color;
-editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index];savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();});
+editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index];savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderAdvanced();});
 editorLabel.append(editor,name);
 const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove Palette '+(paletteIndex+1)+' color '+(index+1));
-remove.addEventListener('click',()=>{entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+remove.addEventListener('click',()=>{normalizeAdvanced(paletteIndex);savedAdvanced[paletteIndex].weights.splice(index,1);entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 card.append(editorLabel,remove);column.append(card);});
 if(!entries.length){const empty=document.createElement('p');empty.textContent='No colors yet';column.append(empty);}
 list.append(column);
 }
 document.querySelector('#add-color').textContent='Add color to '+paletteNames[activePalette];
+renderAdvanced();
 }
+function normalizeAdvanced(index){
+const entries=savedPalettes[index].split(',').map(c=>c.trim()).filter(Boolean);
+savedAdvanced[index].weights=entries.map((_,i)=>savedAdvanced[index].weights[i]??10);
+}
+function updateFrequencySummary(){
+const weights=savedAdvanced[activePalette].weights,total=weights.reduce((sum,w)=>sum+w,0);
+for(const share of document.querySelectorAll('.frequency-share'))share.textContent=total?((weights[Number(share.dataset.index)]/total)*100).toFixed(1)+'%':'0%';
+document.querySelector('#frequency-summary').textContent=total?'Approximate share of palette choices. Small creations and large patches can differ.':'Set at least one frequency above 0 to generate a file.';
+}
+function renderAdvanced(){
+normalizeAdvanced(activePalette);
+document.querySelector('#advanced-palette').textContent='Settings for '+paletteNames[activePalette];
+const group=savedAdvanced[activePalette].groupingSize;
+document.querySelector('#grouping-size').value=String(group);
+document.querySelector('#grouping-value').textContent=group===1?'1 — independent faces':group+' blocks per side';
+const list=document.querySelector('#frequency-controls');list.replaceChildren();
+const entries=savedPalettes[activePalette].split(',').map(c=>c.trim()).filter(Boolean);
+entries.forEach((color,index)=>{const row=document.createElement('label');row.className='frequency-row';
+const chip=document.createElement('span');chip.className='target-chip';chip.style.backgroundColor=color;
+const text=document.createElement('span');text.textContent=color;
+const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=String(savedAdvanced[activePalette].weights[index]);input.setAttribute('aria-label','Frequency of '+color);input.dataset.index=String(index);
+const share=document.createElement('span');share.className='frequency-share';share.dataset.index=String(index);
+input.addEventListener('input',()=>{const value=Number(input.value);savedAdvanced[activePalette].weights[index]=Number.isFinite(value)?Math.max(0,Math.min(100,Math.round(value))):0;if(input.value!=='')input.value=String(savedAdvanced[activePalette].weights[index]);updateFrequencySummary();savePalettes();});
+row.append(chip,text,input,share);list.append(row);});updateFrequencySummary();
+}
+document.querySelector('#grouping-size').addEventListener('input',event=>{const value=Number(event.target.value);savedAdvanced[activePalette].groupingSize=value;document.querySelector('#grouping-value').textContent=value===1?'1 — independent faces':value+' blocks per side';savePalettes();});
 replacements.addEventListener('input',()=>{renderReplacementCards();savePalettes();});
 renderReplacementCards();
 function renderTargetColors(colors){
