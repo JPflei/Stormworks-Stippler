@@ -2,6 +2,8 @@ name: Deploy website to GitHub Pages
 
 on:
   push:
+    branches: [main, feature/blob-camouflage]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -9,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: github-pages
+  group: github-pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -37,11 +39,13 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/stippler-tests/node_modules
         run: node tests/browser.cjs
       - name: Upload static website
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web
 
   deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
     permissions:

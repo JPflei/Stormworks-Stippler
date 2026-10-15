@@ -71,38 +71,43 @@ const http = require('node:http');
     });
     for(const [name,passed] of Object.entries(faceChecks)) assert.equal(passed,true,name);
     const advancedChecks = await page.evaluate(() => {
-      const components=Array.from({length:1024},(_,x)=>`<c><o bc="808080" sc="2,808080,123456"><vp x="${x}"/></o></c>`);
-      const vehicle=items=>'<vehicle><bodies><body unique_id="5"><components>'+items.join('')+'</components></body></bodies></vehicle>';
-      const source=vehicle(components);
-      const options={mode:'replace',target:'808080',replacements:['112233','AABBCC'],weights:[30,10]};
-      const read=xml=>[...new DOMParser().parseFromString(xml,'application/xml').querySelectorAll('o')].map(o=>({x:Number(o.querySelector('vp').getAttribute('x')),color:o.getAttribute('bc'),face:o.getAttribute('sc').split(',')[1],other:o.getAttribute('sc').split(',')[2]}));
-      const independent=read(stippleVehicle(source,0,42,options).xml);
-      const groupedOptions={...options,weights:[10,10],groupingSize:8};
-      const groupedResult=stippleVehicle(source,0,42,groupedOptions);
-      const grouped=read(groupedResult.xml);
-      const reversed=read(stippleVehicle(vehicle([...components].reverse()),0,42,groupedOptions).xml).sort((a,b)=>a.x-b.x);
-      const adjacent=rows=>rows.slice(1).filter((row,i)=>row.color===rows[i].color).length/(rows.length-1);
-      const share=independent.filter(o=>o.color==='112233').length/independent.length;
-      let zeroRejected=false;try{stippleVehicle(source,0,42,{...options,weights:[0,0]});}catch{zeroRejected=true;}
-      const excluded=read(stippleVehicle(source,0,42,{...options,weights:[0,10],groupingSize:8}).xml);
-      const longer=vehicle(Array.from({length:4096},(_,x)=>`<c><o bc="808080"><vp x="${x}"/></o></c>`));
-      const colorList=xml=>[...new DOMParser().parseFromString(xml,'application/xml').querySelectorAll('o')].map(o=>o.getAttribute('bc'));
-      const small=colorList(stippleVehicle(longer,0,42,{...options,weights:[10,10],groupingSizes:[2,2]}).xml);
-      const mixedOptions={...options,weights:[10,10],groupingSizes:[16,2]};
-      const mixed=stippleVehicle(longer,0,42,mixedOptions),mixedColors=colorList(mixed.xml);
-      const sameNeighbor=colors=>{let same=0,total=0;for(let i=1;i<colors.length;i++)if(colors[i-1]==='112233'){total++;if(colors[i]==='112233')same++;}return same/total;};
-      const mixedShare=mixedColors.filter(c=>c==='112233').length/mixedColors.length;
-      return {weightedShare:share>0.70 && share<0.80,
-        perColorScale:sameNeighbor(mixedColors)>sameNeighbor(small)+0.03,
-        mixedFrequency:mixedShare>0.4 && mixedShare<0.6,
-        mixedRepeatable:mixed.xml===stippleVehicle(longer,0,42,mixedOptions).xml,
-        excluded:excluded.every(o=>o.color==='AABBCC' && o.face==='AABBCC'),
-        grouping:grouped.every((o,i)=>o.color===grouped[Math.floor(i/8)*8].color && o.face===o.color),
-        moreNeighbors:adjacent(grouped)>adjacent(independent)+0.20,
-        orderIndependent:JSON.stringify(grouped)===JSON.stringify(reversed),
-        unchangedPaint:grouped.every(o=>o.other==='123456'),
-        repeatable:groupedResult.xml===stippleVehicle(source,0,42,groupedOptions).xml,
-        zeroRejected};
+      const components=[];
+      for(let y=-24;y<24;y++)for(let x=-24;x<24;x++)components.push(`<c><o bc="808080" sc="2,808080,123456"><vp x="${x}" y="${y}"/></o></c>`);
+      const vehicle=items=>'<vehicle><!-- keep --><bodies><body unique_id="5"><components>'+items.join('')+'</components></body></bodies></vehicle>';
+      const source=vehicle(components),options={mode:'replace',target:'808080',replacements:['112233','AABBCC'],frequencies:[0,45],groupingSizes:[8,8],background:0,outliers:0};
+      const read=xml=>[...new DOMParser().parseFromString(xml,'application/xml').querySelectorAll('o')].map(o=>({position:o.querySelector('vp').outerHTML,color:o.getAttribute('bc'),face:o.getAttribute('sc').split(',')[1],other:o.getAttribute('sc').split(',')[2]}));
+      const low=read(stippleVehicle(source,0,42,{...options,frequencies:[0,15]}).xml);
+      const high=read(stippleVehicle(source,0,42,{...options,frequencies:[0,90]}).xml);
+      const base=stippleVehicle(source,0,42,options),rows=read(base.xml);
+      const small=read(stippleVehicle(source,0,42,{...options,groupingSizes:[8,4]}).xml);
+      const large=read(stippleVehicle(source,0,42,{...options,groupingSizes:[8,12]}).xml);
+      const count=items=>items.filter(o=>o.color==='AABBCC').length;
+      const reversed=read(stippleVehicle(vehicle([...components].reverse()),0,42,options).xml).reverse();
+      const background=read(stippleVehicle(source,0,42,{...options,frequencies:[0,0]}).xml);
+      const differentBackground=read(stippleVehicle(source,0,42,{...options,background:1,frequencies:[0,0]}).xml);
+      const outliers=read(stippleVehicle(source,0,42,{...options,outliers:10}).xml);
+      const changes=outliers.filter((o,i)=>o.color!==rows[i].color).length;
+      let invalidRejected=false;try{stippleVehicle(source,0,42,{...options,frequencies:[0,101]});}catch{invalidRejected=true;}
+      const fallback=stippleVehicle('<vehicle><o bc="808080"><vp x="1e99"/></o><o bc="123456"/></vehicle>',0,42,options);
+      const excluded=stippleVehicle(source,0,42,{...options,replacements:['112233','AABBCC','FF0000'],frequencies:[0,45,0],groupingSizes:[8,8,8],outliers:10});
+      return {
+        densityAddsBlobs:count(high)>count(low)*2,
+        densityKeepsExistingBlobs:low.every((o,i)=>o.color!=='AABBCC'||high[i].color==='AABBCC'),
+        sizeGrowsBlobs:count(large)>count(small)*2,
+        sizeKeepsCenters:small.every((o,i)=>o.color!=='AABBCC'||large[i].color==='AABBCC'),
+        backgroundFillsGaps:rows.some(o=>o.color==='112233') && rows.some(o=>o.color==='AABBCC'),
+        noBlobsIsBackground:background.every(o=>o.color==='112233') && differentBackground.every(o=>o.color==='AABBCC'),
+        solidInterior:rows.every(o=>o.color===o.face),
+        sparseOutliers:changes>0 && changes<rows.length*0.2,
+        orderIndependent:JSON.stringify(rows)===JSON.stringify(reversed),
+        unchangedPaint:rows.every(o=>o.other==='123456') && base.xml.includes('<!-- keep -->'),
+        repeatable:base.xml===stippleVehicle(source,0,42,options).xml,
+        newSeedChangesPattern:base.xml!==stippleVehicle(source,0,43,options).xml,
+        positioned:base.unpositioned_objects===0,
+        fallbackReported:fallback.unpositioned_objects===1,
+        excludedEvenWithOutliers:read(excluded.xml).every(o=>o.color!=='FF0000' && o.face!=='FF0000'),
+        invalidRejected,
+      };
     });
     for(const [name,passed] of Object.entries(advancedChecks)) assert.equal(passed,true,name);
 
@@ -195,35 +200,37 @@ const http = require('node:http');
     await page.locator('#mode').selectOption('replace');
     assert.equal(await page.locator('[data-palette="1"] input[type=color]').first().inputValue(),'#abcdef');
     await page.locator('#advanced-options').evaluate(element=>element.open=true);
+    // Use the second color as background, then edit only the first color's blob settings.
+    await page.locator('#blob-background').selectOption('1');
     await page.locator('#frequency-controls input[data-index]').first().fill('30');
-    await page.locator('#frequency-controls input[data-index]').nth(1).fill('10');
-    await page.locator('.color-grouping').first().fill('8');
-    await page.locator('.color-grouping').nth(1).fill('2');
-    assert.equal(await page.locator('.frequency-share').first().textContent(),'75.0%');
+    await page.locator('.color-grouping').first().fill('12');
+    await page.locator('#blob-outliers').fill('3');
+    assert.equal(await page.locator('.frequency-share').first().textContent(),'Density');
+    assert.ok(await page.locator('.color-grouping').nth(1).isDisabled());
     await page.locator('[data-palette="1"] .palette-title').click();
-    assert.equal(await page.locator('.color-grouping').first().inputValue(),'1');
-    await page.locator('.color-grouping').first().fill('3');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'8');
     await page.reload();
     await page.locator('#mode').selectOption('replace');
-    assert.equal(await page.locator('.color-grouping').first().inputValue(),'3');
     await page.locator('[data-palette="0"] .palette-title').click();
-    assert.equal(await page.locator('.color-grouping').first().inputValue(),'8');
-    assert.equal(await page.locator('.color-grouping').nth(1).inputValue(),'2');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'12');
+    assert.equal(await page.locator('#blob-background').inputValue(),'1');
+    assert.equal(await page.locator('#blob-outliers').inputValue(),'3');
     assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'30');
-    assert.equal(await page.locator('#frequency-controls input[data-index]').nth(1).inputValue(),'10');
     await page.locator('[data-palette="0"] .remove-color').first().click();
-    assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'10');
-    assert.equal(await page.locator('.color-grouping').first().inputValue(),'2');
+    assert.equal(await page.locator('#blob-background').inputValue(),'0');
+    assert.ok(await page.locator('#frequency-controls input[data-index]').first().isDisabled());
     await page.setViewportSize({width:375,height:800});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth), 'Mobile palette layout fits viewport');
+    // Import legacy colors, but do not reuse the old percentage/grouping interpretation.
     await page.evaluate(()=>{
-      const key='stormworks-stippler.palettes.v1',saved=JSON.parse(localStorage.getItem(key));
-      saved.colors[0]='#112233, #445566';saved.active=0;saved.advanced[0]={weights:[9,1],groupingSize:6};
-      localStorage.setItem(key,JSON.stringify(saved));
+      localStorage.removeItem('stormworks-stippler.blob-palettes.v1');
+      localStorage.setItem('stormworks-stippler.palettes.v1',JSON.stringify({colors:['#112233, #445566','#778899','#AABBCC'],active:0,advanced:[{weights:[9,1],groupingSize:6},{},{}]}));
     });
     await page.reload();await page.locator('#mode').selectOption('replace');
-    assert.deepEqual(await page.locator('.color-grouping').evaluateAll(inputs=>inputs.map(i=>i.value)),['6','6']);
-    assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'9');
+    assert.deepEqual(await page.locator('.color-grouping').evaluateAll(inputs=>inputs.map(i=>i.value)),['8','8']);
+    assert.equal(await page.locator('#frequency-controls input[data-index]').nth(1).inputValue(),'45');
+    assert.equal(await page.locator('#replacements').inputValue(),'#112233, #445566');
+    assert.ok(await page.evaluate(()=>localStorage.getItem('stormworks-stippler.palettes.v1').includes('groupingSize')));
     assert.deepEqual(errors, []);
     console.log('Browser replacement mode, preview, download, variance and preservation checks passed.');
   } finally {
