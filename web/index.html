@@ -20,6 +20,8 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <label>Paint mode<select id="mode"><option value="vary">Vary selected paint colors</option><option value="replace">Replace one paint color</option></select></label>
 <section id="vary-selection"><p>Select colors to vary. Unselected paint stays unchanged.</p><div id="vary-colors" class="target-colors" role="group" aria-label="Paint colors to vary"></div></section>
 <section id="replacement" hidden>
+<label>Replacement palette<select id="palette-select"><option value="0">Palette 1</option><option value="1">Palette 2</option><option value="2">Palette 3</option></select></label>
+<p id="palette-storage" role="status">Palettes are saved automatically in this browser.</p>
 <label>Color to replace<select id="target"><option value="">Upload a creation first</option></select></label>
 <div id="target-colors" class="target-colors" role="group" aria-label="Choose a paint color to replace"></div>
 <label>Replacement colors (hex, separated by commas)<input id="replacements" type="text" value="#62734D, #988563, #3C4934" spellcheck="false"></label>
@@ -129,6 +131,27 @@ let url, previewTimer, previewVersion=0;
 const preview=document.querySelector('#preview'),palette=document.querySelector('#palette'),previewStatus=document.querySelector('#preview-status');
 let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
+const paletteSelect=document.querySelector('#palette-select');
+const paletteStorageKey='stormworks-stippler.palettes.v1';
+let savedPalettes=Array(3).fill(replacements.value),activePalette=0;
+try{
+const stored=JSON.parse(localStorage.getItem(paletteStorageKey));
+if(stored && Array.isArray(stored.colors) && stored.colors.length===3 && stored.colors.every(c=>typeof c==='string' && c.length<=10000)){
+savedPalettes=stored.colors.slice();
+if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)activePalette=stored.active;
+}
+}catch{}
+paletteSelect.value=String(activePalette);replacements.value=savedPalettes[activePalette];
+function savePalettes(){
+savedPalettes[activePalette]=replacements.value;
+try{localStorage.setItem(paletteStorageKey,JSON.stringify({colors:savedPalettes,active:activePalette}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
+catch{document.querySelector('#palette-storage').textContent='Browser storage is unavailable. Your palettes will last for this session only.';}
+}
+paletteSelect.addEventListener('input',()=>{
+savedPalettes[activePalette]=replacements.value;
+activePalette=Number(paletteSelect.value);replacements.value=savedPalettes[activePalette];
+renderReplacementCards();savePalettes();
+});
 let paletteFile;
 const selectedColors=new Set();
 function conversionOptions(){return {mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
@@ -153,7 +176,7 @@ const remove=document.createElement('button');remove.type='button';remove.classN
 remove.addEventListener('click',()=>{entries.splice(index,1);replacements.value=entries.join(', ');replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 card.append(chip,name,remove);list.append(card);});
 }
-replacements.addEventListener('input',renderReplacementCards);
+replacements.addEventListener('input',()=>{renderReplacementCards();savePalettes();});
 renderReplacementCards();
 function renderTargetColors(colors){
 const list=document.querySelector('#target-colors');list.replaceChildren();

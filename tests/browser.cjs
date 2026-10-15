@@ -3,8 +3,15 @@ const { chromium } = require('playwright');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const http = require('node:http');
 
 (async () => {
+  const html = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, {'Content-Type':'text/html; charset=utf-8'});
+    response.end(html);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({
     ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
     headless: true,
@@ -13,7 +20,7 @@ const assert = require('node:assert/strict');
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push(e.message));
-    await page.setContent(fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8'));
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const source = '<vehicle><!-- keep --><o bc="808080" ac="808080" sc="2,808080,FFFFFF" other="stay"/><o bc="808080" ac="123456"/><o bc="808080"/><o bc="808080"/><o bc="808080"/></vehicle>';
     const checks = await page.evaluate(source => {
       const options = {mode: 'replace', target: '808080', replacements: ['#225588', '#AA7733']};
@@ -113,9 +120,30 @@ const assert = require('node:assert/strict');
     await page.locator('#mode').selectOption('vary');
     await page.waitForFunction(() => document.querySelectorAll('#vary-colors input').length===3 && document.querySelectorAll('.color-card').length===0);
     assert.equal(await page.locator('#vary-colors input:checked').count(),0);
+    await page.locator('#mode').selectOption('replace');
+    await page.locator('#palette-select').selectOption('0');
+    await page.locator('#replacements').fill('#112233, #445566');
+    await page.locator('#palette-select').selectOption('1');
+    await page.locator('#replacements').fill('#778899');
+    await page.locator('#palette-select').selectOption('2');
+    await page.locator('#replacements').fill('#AABBCC, #DDEEFF');
+    await page.getByRole('button',{name:'Remove replacement #AABBCC',exact:true}).click();
+    await page.locator('#palette-select').selectOption('0');
+    assert.equal(await page.locator('#replacements').inputValue(),'#112233, #445566');
+    await page.locator('#palette-select').selectOption('1');
+    assert.equal(await page.locator('#replacements').inputValue(),'#778899');
+    await page.reload();
+    await page.locator('#mode').selectOption('replace');
+    assert.equal(await page.locator('#palette-select').inputValue(),'1');
+    assert.equal(await page.locator('#replacements').inputValue(),'#778899');
+    await page.locator('#palette-select').selectOption('2');
+    assert.equal(await page.locator('#replacements').inputValue(),'#DDEEFF');
+    await page.locator('#palette-select').selectOption('0');
+    assert.equal(await page.locator('#replacement-cards .target-choice').count(),2);
     assert.deepEqual(errors, []);
     console.log('Browser replacement mode, preview, download, variance and preservation checks passed.');
   } finally {
     await browser.close();
+    await new Promise(resolve => server.close(resolve));
   }
 })().catch(error => {console.error(error); process.exitCode = 1;});
