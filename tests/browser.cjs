@@ -154,10 +154,10 @@ const http = require('node:http');
 
     const directionalChecks=await page.evaluate(()=>{
       const nodes=Array.from({length:101},(_,x)=>({xyz:[x,0,0]})),neighbors=nodes.map((_,i)=>[i-1,i+1].filter(j=>j>=0&&j<101));
-      function displacement(x){const result=growSeededCanvas(nodes,neighbors,[0,100],[20,20],()=>0.5,2,[0,0],[{x:0,y:0},{x,y:0}]);return result.blobs[0].growthEdges.reduce((sum,edge)=>sum+nodes[edge[1]].xyz[0]-nodes[result.blobs[0].tile].xyz[0],0);}
-      return displacement(1)>0&&displacement(-1)<0;
+      function displacement(x,strictness=0){const result=growSeededCanvas(nodes,neighbors,[0,100],[20,20],()=>0.5,2,[0,strictness],[{x:0,y:0},{x,y:0}]);return result.blobs[0].growthEdges.reduce((sum,edge)=>sum+nodes[edge[1]].xyz[0]-nodes[result.blobs[0].tile].xyz[0],0);}
+      return displacement(1)>0&&displacement(-1)<0&&displacement(1,1)>displacement(0,1)+20&&displacement(-1,1)<displacement(0,1)-20;
     });
-    assert.equal(directionalChecks,true,'Opposite vectors bias blob growth in opposite directions');
+    assert.equal(directionalChecks,true,'Vectors bias growth in opposite directions and strictness follows the directed metric');
 
     const selectionChecks = await page.evaluate(source => {
       const untouched = stippleVehicle(source, 12, 42);
@@ -313,10 +313,15 @@ const http = require('node:http');
     assert.equal(await page.locator('.color-grouping').nth(1).inputValue(),'28');
     assert.ok(await page.locator('[data-palette="0"] input[type=color]').first().isEnabled());
     await page.locator('#file').setInputFiles({name:'slice.xml',mimeType:'application/xml',buffer:Buffer.from(source)});
+    await page.waitForTimeout(250);
+    assert.ok(await page.locator('#tile-map-preview').isHidden(),'Layer preview waits for Replace selected paint');
+    await page.getByRole('button',{name:'Replace selected paint',exact:true}).click();
     await page.waitForFunction(()=>!document.querySelector('#tile-map-preview').hidden);
     assert.ok(await page.locator('#tile-layer option').count()>0);
     await page.locator('#tile-axis').selectOption('0');
     assert.ok((await page.locator('#tile-map-summary').textContent()).includes('tiles in this slice'));
+    await page.locator('#seed').fill('123');
+    assert.ok(await page.locator('#tile-map-preview').isHidden(),'Settings invalidate the exported layer preview');
     await page.setViewportSize({width:375,height:800});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth), 'Mobile palette layout fits viewport');
     await page.evaluate(()=>{

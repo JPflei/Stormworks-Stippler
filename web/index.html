@@ -41,7 +41,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <p id="advanced-palette"></p>
 <p>The first color fills the canvas (with shade variance). Remaining colors grow in palette order. Move colors up or down to choose the base and layering order. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables an overlay color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
 
-<p>Each color has its own strictness and direction chart (body-local X/Y). Drag from the bottom-center origin; vector length controls directional preference. (0, 0) is neutral. Strictness 0 picks randomly from the connected frontier. Higher values favor tiles closer to the seed; 1 always chooses the nearest available tile. Distance follows orthogonal tile links.</p>
+<p>Each color has its own strictness and direction chart (body-local X/Y). Drag from the bottom-center origin; vector length controls directional preference. (0, 0) is neutral. Strictness 0 uses the vector bias alone (random growth for a zero vector). Higher strictness follows distance adjusted by the vector: forward growth costs less, backward growth costs more. At 1, only tiles with the lowest adjusted distance can grow. A zero vector gives compact growth around the seed.</p>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
 <label>Outliers: <output id="outliers-value">5%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="5"></label>
 <div id="frequency-controls"></div>
@@ -131,15 +131,20 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
             for(const candidate of frontier)if(owners[candidate]!==-1||reserved[candidate]!==-1)frontier.delete(candidate);
             if(!frontier.size)break;
             if(!growthDistance){growthDistance=new Int32Array(n).fill(infinity);growthDistance[tile]=0;const queue=[tile];for(let head=0;head<queue.length;head++)for(const candidate of neighbors[queue[head]])if(growthDistance[candidate]===infinity){growthDistance[candidate]=growthDistance[queue[head]]+1;queue.push(candidate);}}
-            let minimum=infinity;for(const candidate of frontier)minimum=Math.min(minimum,growthDistance[candidate]);
-            const candidates=[...frontier],weights=candidates.map(candidate=>{
-              const nearest=growthDistance[candidate]===minimum;
-              if(colorStrictness===1&&!nearest)return 0;
-              const origin=nodes[tile].xyz,point=nodes[candidate].xyz;
+            const origin=nodes[tile].xyz,candidates=[...frontier];
+            const metrics=candidates.map(candidate=>{
+              const point=nodes[candidate].xyz;
               const dx=origin&&point?point[0]-origin[0]:0,dy=origin&&point?point[1]-origin[1]:0;
-              const length=Math.hypot(dx,dy),bias=length?3*(dx*direction.x+dy*direction.y)/length:0;
-              return Math.exp((colorStrictness===1?0:-colorStrictness/(1-colorStrictness)*(growthDistance[candidate]-minimum))+bias);
+              const projection=dx*direction.x+dy*direction.y,length=Math.hypot(dx,dy);
+              // Forward travel costs as little as 10% of ordinary graph distance.
+              // The same directional metric drives strictness, including its hard limit at 1.
+              return {distance:growthDistance[candidate]-0.9*projection,bias:length?6*projection/length:0};
             });
+            const minimum=Math.min(...metrics.map(metric=>metric.distance));
+            const logits=metrics.map(metric=>colorStrictness===1?
+              (Math.abs(metric.distance-minimum)<1e-9?metric.bias:-Infinity):
+              -colorStrictness/(1-colorStrictness)*(metric.distance-minimum)+metric.bias);
+            const maximum=Math.max(...logits),weights=logits.map(value=>Math.exp(value-maximum));
             let choice=random()*weights.reduce((sum,value)=>sum+value,0);next=candidates[candidates.length-1];
             for(let i=0;i<candidates.length;i++){choice-=weights[i];if(choice<0){next=candidates[i];break;}}
           }
@@ -324,7 +329,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     });
     return {color: entry.color, count: entry.count, samples};
   });
-  const tileMap=graph?graph.layers.map(group=>({body:group.body,layer:group.layer,seeds:group.seeds.length,blobs:group.blobs.map(({color,generated,connectedSize,targetSize,expectedSize,reason})=>({color,generated,connectedSize,targetSize,expectedSize,reason})),tiles:group.nodes.map(node=>({xyz:node.xyz,color:node.resultColor,base:replacements[node.colorIndex],seed:node.seedColor>=0}))})):[];
+  const tileMap=graph&&options.includeTileMap!==false?graph.layers.map(group=>({body:group.body,layer:group.layer,seeds:group.seeds.length,blobs:group.blobs.map(({color,generated,connectedSize,targetSize,expectedSize,reason})=>({color,generated,connectedSize,targetSize,expectedSize,reason})),tiles:group.nodes.map(node=>({xyz:node.xyz,color:node.resultColor,base:replacements[node.colorIndex],seed:node.seedColor>=0}))})):[];
   unpositioned_objects=graph?graph.missing:0;
   return {xml, objects, paint_fields, changed_fields, matched_fields, unpositioned_objects, tileMap, preview, colors: ranked.map(({color, count}) => ({color, count}))};
 }
@@ -376,7 +381,7 @@ renderReplacementCards();savePalettes();
 let paletteFile;
 const selectedColors=new Set();
 function conversionOptions(){normalizeAdvanced(activePalette);return {growthStrictnesses:savedAdvanced[activePalette].strictnesses.slice(),growthDirections:savedAdvanced[activePalette].directions.map(v=>({...v})),seedRepulsion:savedAdvanced[activePalette].seedRepulsion,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview-note').textContent=mode.value==='replace'?'The 50×50 canvas simulates the same growth algorithm, palette, spacing, size, strictness, seed, outliers, and shade variance. Vehicle geometry can change the result; inspect actual paint layers below.':'Tiles sample shades for the selected colors; they do not show block positions or in-game lighting.';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview-note').textContent=mode.value==='replace'?'The 50×50 canvas simulates the same growth algorithm, palette, spacing, size, strictness, seed, outliers, and shade variance. Vehicle geometry can change the result. Click Replace selected paint to generate the actual paint layers.':'Tiles sample shades for the selected colors; they do not show block positions or in-game lighting.';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderVaryColors(colors){
 const list=document.querySelector('#vary-colors');list.replaceChildren();
 for(const item of colors){const label=document.createElement('label');label.className='target-choice';label.style.cursor='pointer';
@@ -540,11 +545,12 @@ renderTargetColors(original.colors);
 selectedColors.clear();renderVaryColors(original.colors);
 paletteFile=selected;
 }
-const data=stippleVehicle(source,settings.strength,settings.seed,conversionOptions());if(version!==previewVersion)return;
-renderPreview(data.preview);renderTileMap(data);syncMode();previewStatus.textContent=mode.value!=='replace'&&!selectedColors.size?'Select colors above to see their previews.':'';
+const data=stippleVehicle(source,settings.strength,settings.seed,{...conversionOptions(),includeTileMap:false});if(version!==previewVersion)return;
+renderPreview(data.preview);syncMode();previewStatus.textContent=mode.value!=='replace'&&!selectedColors.size?'Select colors above to see their previews.':'';
 }catch(error){if(version===previewVersion){palette.replaceChildren();document.querySelector('#tile-map-preview').hidden=true;previewStatus.textContent=error.message;}}
 }
 form.addEventListener('input',event=>{
+document.querySelector('#tile-map-preview').hidden=true;
 if(event.target===file){selectedColors.clear();paletteFile=null;document.querySelector('#vary-colors').replaceChildren();palette.replaceChildren();document.querySelector('#tile-map-preview').hidden=true;}
 syncMode();
 clearTimeout(previewTimer);const version=++previewVersion;
@@ -560,7 +566,7 @@ if(mode.value!=='replace'&&!selectedColors.size){status.textContent='Select at l
 if(selected.size>19*1024*1024){status.textContent='Choose an XML file smaller than 19 MB.';return;}
 button.disabled=true;status.textContent='Adding paint variation…';
 const version=previewVersion;
-try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`)+(mode.value==='replace'&&data.unpositioned_objects?` ${data.unpositioned_objects} objects have no usable positions; their paint slots are treated as isolated tiles.`:'');}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
+try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;if(mode.value==='replace')renderTileMap(data);url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`)+(mode.value==='replace'&&data.unpositioned_objects?` ${data.unpositioned_objects} objects have no usable positions; their paint slots are treated as isolated tiles.`:'');}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
 });
 syncMode();
 for(let index=0;index<3;index++)normalizeAdvanced(index);
