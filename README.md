@@ -26,4 +26,6 @@ The GitHub Pages workflow in `.github/workflows/pages.yml` tests the converters 
 
 One-time repository setup: open **Settings → Pages**, then set **Source** to **GitHub Actions**. After the workflow completes, the expected website address is `https://jpflei.github.io/Stormworks-Stippler/`. The deployment job reports the actual URL. If the repository is private, GitHub Pages availability depends on the account plan.
 
+If Pages is configured to deploy from the `main` branch root instead, the root `index.html` forwards visitors to the app in `web/`, preventing the README from becoming the homepage. GitHub Actions remains the recommended source because it runs checks before publishing.
+
 The server binds to loopback by default. For a cloud host that provides its own authenticated port access, use `python3 server.py --host 0.0.0.0`. Do not expose it directly to the public internet.
