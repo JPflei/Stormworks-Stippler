@@ -75,7 +75,7 @@ const http = require('node:http');
       function rng(){let state=42;return()=>{state+=0x6D2B79F5;let t=Math.imul(state^state>>>15,1|state);t^=t+Math.imul(t^t>>>7,61|t);return((t^t>>>14)>>>0)/4294967296;};}
       const spacings=[6,6,6],sizes=[12,12,12],repulsion=2;
       const result=growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion);
-      const replay=result.initialColors.slice(),anchors=[],claimed=new Set();let current=-1,valid=true,minimal=true,connected=true,counts=true,exhausted=true;
+      const replay=result.initialColors.slice(),anchors=[],claimed=new Set();let current=-1,valid=true,scored=true,nonMinimum=false,connected=true,counts=true,exhausted=true;
       const distance=(a,b)=>Math.abs(nodes[a].xyz[0]-nodes[b].xyz[0])+Math.abs(nodes[a].xyz[1]-nodes[b].xyz[1]);
       function component(tile,color){const seen=new Set([tile]),queue=[tile];for(let i=0;i<queue.length;i++)for(const next of neighbors[queue[i]])if(replay[next]===color&&!seen.has(next)){seen.add(next);queue.push(next);}return seen;}
       for(const [blobIndex,blob] of result.blobs.entries()){
@@ -89,7 +89,8 @@ const http = require('node:http');
           return score;
         }
         const chosenScore=score(blob.tile),minimum=Math.min(...nodes.map((_,tile)=>score(tile)));
-        minimal&&=Math.abs(chosenScore-minimum)<1e-9&&Math.abs(chosenScore-blob.score)<1e-9;
+        scored&&=Number.isFinite(chosenScore)&&Math.abs(chosenScore-blob.score)<1e-9;
+        nonMinimum||=chosenScore>minimum+1e-9;
         const own=anchors.filter(a=>a.color===current).map(a=>distance(a.tile,blob.tile));
         valid&&=!own.length||(Math.min(...own)>=4&&Math.min(...own)<=8);
         replay[blob.tile]=current;anchors.push(blob);claimed.add(blob.tile);const owned=new Set([blob.tile]);
@@ -120,7 +121,7 @@ const http = require('node:http');
       const calibrated=growSeededCanvas(averageNodes,averageNeighbors,[0,12],[24,24],rng(),2,1);
       const actualMean=mean(calibrated.blobs);
       const baseOnly=growSeededCanvas(nodes,neighbors,[0],[12],rng());
-      return {validSpacing:valid,minimumScore:minimal,orthogonalGrowth:connected,connectedCounts:counts,
+      return {validSpacing:valid,validScores:scored,randomNonMinimum:nonMinimum,orthogonalGrowth:connected,connectedCounts:counts,
         replayMatches:JSON.stringify(replay)===JSON.stringify(result.colors),
         reservedAnchors:result.seeds.every(seed=>result.colors[seed.tile]===seed.color),
         uniqueSeeds:new Set(result.seeds.map(seed=>seed.tile)).size===result.seeds.length,

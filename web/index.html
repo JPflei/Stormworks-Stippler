@@ -84,17 +84,11 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
   const initialColors=Array.from(canvas);
   const reserved=new Int32Array(n).fill(-1),seeds=[],blobs=[];
   const distances=spacings.map(()=>new Int32Array(n).fill(infinity));
-  class Heap {
-    constructor(){this.items=[];}
-    less(a,b){return a.score<b.score || (a.score===b.score && (a.tie<b.tie || (a.tie===b.tie && a.tile<b.tile)));}
-    push(value){const a=this.items;let i=a.length;a.push(value);while(i){const p=(i-1)>>1;if(!this.less(a[i],a[p]))break;[a[i],a[p]]=[a[p],a[i]];i=p;}}
-    pop(){const a=this.items;if(!a.length)return null;const first=a[0],last=a.pop();if(a.length){a[0]=last;let i=0;while(true){let j=i,l=i*2+1,r=l+1;if(l<a.length&&this.less(a[l],a[j]))j=l;if(r<a.length&&this.less(a[r],a[j]))j=r;if(j===i)break;[a[i],a[j]]=[a[j],a[i]];i=j;}}return first;}
-  }
   // Palette order is intentional: later colors can overpaint growth, but not seed anchors.
   for(const color of enabled){
     const owners=new Int32Array(n).fill(-1);let completedTiles=0,completedBlobs=0;
-    const distance=distances[color],versions=new Uint32Array(n),ties=Float64Array.from(nodes,()=>random());
-    const desired=spacings[color],lower=Math.max(1,desired-2),upper=desired+2,heap=new Heap();
+    const distance=distances[color],weights=new Float64Array(n);
+    const desired=spacings[color],lower=Math.max(1,desired-2),upper=desired+2;
     function score(tile){
       if(reserved[tile]!==-1 || owners[tile]!==-1)return Infinity;
       const d=distance[tile];if(d!==infinity&&(d<lower||d>upper))return Infinity;
@@ -102,18 +96,25 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
       for(const other of enabled)if(other!==color&&distances[other][tile]!==infinity)result+=repulsion/(1+distances[other][tile]);
       return result;
     }
-    function rescore(tile){const version=++versions[tile],value=score(tile);if(Number.isFinite(value))heap.push({tile,score:value,tie:ties[tile],version});}
+    // Inverse-score weights keep every valid candidate possible while favoring lower penalties.
+    function rescore(tile){const value=score(tile);weights[tile]=Number.isFinite(value)?1/(1+value):0;}
+    function chooseSeed(){
+      let total=0;for(const weight of weights)total+=weight;
+      if(total===0)return null;
+      let draw=random()*total,last=-1;
+      for(let tile=0;tile<n;tile++)if(weights[tile]>0){last=tile;draw-=weights[tile];if(draw<0)return {tile,score:score(tile)};}
+      return last<0?null:{tile:last,score:score(last)};
+    }
     for(let i=0;i<n;i++)rescore(i);
     function updateDistances(seed){
       const queue=[seed];distance[seed]=0;rescore(seed);
       for(let head=0;head<queue.length;head++)for(const next of neighbors[queue[head]])if(distance[next]>distance[queue[head]]+1){distance[next]=distance[queue[head]]+1;queue.push(next);rescore(next);}
     }
     let choice;
-    while((choice=heap.pop())){
-      if(choice.version!==versions[choice.tile]||!Number.isFinite(score(choice.tile)))continue;
+    while((choice=chooseSeed())){
       const tile=choice.tile,sameDistance=distance[tile],record={tile,color,score:choice.score,sameDistance:sameDistance===infinity?null:sameDistance};
       const blobId=blobs.length,frontier=new Set();
-      function paintOwned(next){canvas[next]=color;owners[next]=blobId;for(const neighbor of neighbors[next])if(owners[neighbor]===-1&&reserved[neighbor]===-1)frontier.add(neighbor);}
+      function paintOwned(next){canvas[next]=color;owners[next]=blobId;rescore(next);for(const neighbor of neighbors[next])if(owners[neighbor]===-1&&reserved[neighbor]===-1)frontier.add(neighbor);}
       reserved[tile]=color;paintOwned(tile);seeds.push(record);updateDistances(tile);
       const target=sizes[color],expectedSize=Math.max(1,Math.min(target*2,(completedBlobs+1)*target-completedTiles));
       const spread=Math.min(Math.floor(target/4),expectedSize-1),minimumSize=expectedSize-spread,maximumSize=expectedSize+spread;
@@ -398,7 +399,7 @@ savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].group
 }
 function updateFrequencySummary(){
 for(const share of document.querySelectorAll('.frequency-share'))share.textContent=Number(share.dataset.index)===0?'Base':savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'tiles';
-document.querySelector('#frequency-summary').textContent='Lowest-score valid seed wins. Larger spacing spreads seeds farther apart. Growth sizes vary around the requested mean; small regions can limit the result.';
+document.querySelector('#frequency-summary').textContent='Valid seeds are drawn randomly with weight 1 / (1 + distance score), favoring lower scores. Larger spacing spreads seeds farther apart. Growth sizes vary around the requested mean; small regions can limit the result.';
 }
 
 function renderAdvanced(){
