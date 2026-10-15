@@ -18,6 +18,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 .replacement-mosaic{grid-template-columns:repeat(30,minmax(0,1fr));grid-template-rows:repeat(30,minmax(0,1fr));aspect-ratio:1}.replacement-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
 #tile-map-preview{display:grid;gap:12px;min-width:0}#tile-map-preview p{font-size:13px}#tile-canvas{width:100%;height:auto;display:block;border:1px solid #354a55;border-radius:8px;box-sizing:border-box}.slice-controls{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .simulation-mosaic{grid-template-columns:repeat(50,minmax(0,1fr));grid-template-rows:repeat(50,minmax(0,1fr));aspect-ratio:1}.simulation-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
+.palette-column .palette-swatch{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}.swatch-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px}.move-color{padding:2px 6px;background:transparent;color:#e9f1f2;font-size:16px;border:1px solid #354a55;border-radius:4px}.move-color:disabled{opacity:.3;cursor:default}.swatch-actions .remove-color{margin-left:0}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -38,7 +39,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <details id="advanced-options">
 <summary>Advanced options</summary>
 <p id="advanced-palette"></p>
-<p>Colors grow in palette order over a random canvas. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables that color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
+<p>The first color fills the canvas (with shade variance). Remaining colors grow in palette order. Move colors up or down to choose the base and layering order. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables an overlay color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
 <label>Growth strictness: <output id="growth-strictness-value">0.00</output><input id="growth-strictness" type="range" min="0" max="1" step="0.01" value="0"></label>
 <p>0 picks randomly from the connected frontier. Higher values favor tiles closer to the seed; 1 always chooses the nearest available tile. Distance follows orthogonal tile links.</p>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
@@ -78,9 +79,8 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion = 2, strictness = 0) {
   if(!Number.isFinite(strictness)||strictness<0||strictness>1)throw new Error('Growth strictness must be between 0 and 1.');
   const n=nodes.length, infinity=2147483647;
-  const enabled=spacings.map((value,color)=>value>0?color:-1).filter(color=>color>=0);
-  if(!enabled.length)throw new Error('Enable at least one palette color with a seed spacing above 0.');
-  const canvas=Int32Array.from(nodes,()=>enabled[Math.floor(random()*enabled.length)]);
+  const enabled=spacings.map((value,color)=>color>0&&value>0?color:-1).filter(color=>color>=0);
+  const canvas=new Int32Array(n);
   const initialColors=Array.from(canvas);
   const reserved=new Int32Array(n).fill(-1),seeds=[],blobs=[];
   const distances=spacings.map(()=>new Int32Array(n).fill(infinity));
@@ -208,7 +208,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   if (replacing && (!replacements.length || replacements.some(c => !hex.test(c)))) throw new Error('Add at least one valid replacement color to the selected palette.');
   const weights = options.seedSpacings ?? options.frequencies ?? options.weights ?? replacements.map(()=>8);
   const groupingSizes = options.groupingSizes === undefined ? replacements.map(() => options.groupingSize ?? 24) : options.groupingSizes;
-  if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100) || !weights.some(w=>w>0))) throw new Error('Enable at least one color. Seed spacing must be a whole number from 0 to 100 (0 disables a color).');
+  if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100))) throw new Error('Seed spacing must be a whole number from 0 to 100 (0 disables an overlay color).');
   if (replacing && (!Array.isArray(groupingSizes) || groupingSizes.length !== replacements.length || groupingSizes.some(g=>!Number.isInteger(g)||g<1||g>512))) throw new Error('Blob size must be a whole number from 1 to 512 connected tiles.');
   const outliers=options.outliers??0,repulsion=options.seedRepulsion??2,strictness=options.growthStrictness??0;
   if(replacing&&(!Number.isFinite(strictness)||strictness<0||strictness>1))throw new Error('Growth strictness must be between 0 and 1.');
@@ -254,7 +254,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
       let index=node.colorIndex;
       const key=node.id;
       if(outliers>0&&node.seedColor<0&&spatialRandom(key+'|outlier')<outliers/100){
-        const alternatives=weights.map((spacing,color)=>spacing>0&&color!==index?color:-1).filter(color=>color>=0);
+        const alternatives=weights.map((spacing,color)=>(color===0||spacing>0)&&color!==index?color:-1).filter(color=>color>=0);
         if(alternatives.length)index=alternatives[Math.floor(spatialRandom(key+'|choice')*alternatives.length)];
       }
       return replacements[index];
@@ -370,16 +370,20 @@ const title=document.createElement('button');title.type='button';title.className
 title.addEventListener('click',()=>{paletteSelect.value=String(paletteIndex);paletteSelect.dispatchEvent(new Event('input',{bubbles:true}));});
 column.append(title);
 const entries=savedPalettes[paletteIndex].split(',').map(c=>c.trim()).filter(Boolean);
-entries.forEach((color,index)=>{const card=document.createElement('div');card.className='target-choice';
+entries.forEach((color,index)=>{const card=document.createElement('div');card.className='target-choice palette-swatch';if(index===0)card.dataset.base='true';
 const normalized=color.replace(/^#/,'').toUpperCase();const valid=/^[0-9A-F]{6}$/.test(normalized);
 const editorLabel=document.createElement('label');editorLabel.className='swatch-editor';
 const editor=document.createElement('input');editor.type='color';editor.value=valid?'#'+normalized:'#808080';editor.setAttribute('aria-label','Edit Palette '+(paletteIndex+1)+' color '+(index+1));
-const name=document.createElement('span');name.textContent=valid?'#'+normalized:color;
-editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index];savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderAdvanced();});
+const name=document.createElement('span');name.textContent=(valid?'#'+normalized:color)+(index===0?' · Base':'');
+editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index]+(index===0?' · Base':'');savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderAdvanced();});
 editorLabel.append(editor,name);
 const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove Palette '+(paletteIndex+1)+' color '+(index+1));
 remove.addEventListener('click',()=>{normalizeAdvanced(paletteIndex);savedAdvanced[paletteIndex].weights.splice(index,1);savedAdvanced[paletteIndex].groupingSizes.splice(index,1);entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
-card.append(editorLabel,remove);column.append(card);});
+const actions=document.createElement('div');actions.className='swatch-actions';
+for(const [delta,symbol,direction] of [[-1,'↑','up'],[1,'↓','down']]){
+const move=document.createElement('button');move.type='button';move.className='move-color';move.textContent=symbol;move.disabled=index+delta<0||index+delta>=entries.length;move.setAttribute('aria-label','Move Palette '+(paletteIndex+1)+' color '+(index+1)+' '+direction);
+move.addEventListener('click',()=>{normalizeAdvanced(paletteIndex);const next=index+delta;[entries[index],entries[next]]=[entries[next],entries[index]];for(const field of ['weights','groupingSizes']){const values=savedAdvanced[paletteIndex][field];[values[index],values[next]]=[values[next],values[index]];}savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});actions.append(move);}
+actions.append(remove);card.append(editorLabel,actions);column.append(card);});
 if(!entries.length){const empty=document.createElement('p');empty.textContent='No colors yet';column.append(empty);}
 list.append(column);
 }
@@ -393,7 +397,7 @@ savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].group
 
 }
 function updateFrequencySummary(){
-for(const share of document.querySelectorAll('.frequency-share'))share.textContent=savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'tiles';
+for(const share of document.querySelectorAll('.frequency-share'))share.textContent=Number(share.dataset.index)===0?'Base':savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'tiles';
 document.querySelector('#frequency-summary').textContent='Lowest-score valid seed wins. Larger spacing spreads seeds farther apart. Growth sizes vary around the requested mean; small regions can limit the result.';
 }
 
@@ -408,11 +412,11 @@ document.querySelector('#blob-outliers').value=String(savedAdvanced[activePalett
 entries.forEach((color,index)=>{const row=document.createElement('div');row.className='frequency-row';
 const chip=document.createElement('span');chip.className='target-chip';chip.style.backgroundColor=color;
 const text=document.createElement('span');text.textContent=color;
-const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=String(savedAdvanced[activePalette].weights[index]);input.setAttribute('aria-label','Seed spacing of '+color);input.dataset.index=String(index);
+const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=String(savedAdvanced[activePalette].weights[index]);input.setAttribute('aria-label','Seed spacing of '+color);input.dataset.index=String(index);input.disabled=index===0;
 const share=document.createElement('span');share.className='frequency-share';share.dataset.index=String(index);
 input.addEventListener('input',()=>{const value=Number(input.value);savedAdvanced[activePalette].weights[index]=Number.isFinite(value)?Math.max(0,Math.min(100,Math.round(value))):0;if(input.value!=='')input.value=String(savedAdvanced[activePalette].weights[index]);updateFrequencySummary();savePalettes();});
 const groupLabel=document.createElement('label');groupLabel.className='group-control';groupLabel.textContent='Blob size (connected tiles)';
-const group=document.createElement('input');group.type='number';group.min='1';group.max='512';group.step='1';group.value=String(savedAdvanced[activePalette].groupingSizes[index]);group.setAttribute('aria-label','Blob size of '+color);group.className='color-grouping';
+const group=document.createElement('input');group.type='number';group.min='1';group.max='512';group.step='1';group.value=String(savedAdvanced[activePalette].groupingSizes[index]);group.setAttribute('aria-label','Blob size of '+color);group.className='color-grouping';group.disabled=index===0;
 group.addEventListener('input',()=>{const value=Number(group.value);savedAdvanced[activePalette].groupingSizes[index]=Number.isFinite(value)?Math.max(1,Math.min(512,Math.round(value))):1;if(group.value!=='')group.value=String(savedAdvanced[activePalette].groupingSizes[index]);savePalettes();});
 groupLabel.append(group);row.append(chip,text,input,share,groupLabel);list.append(row);});updateFrequencySummary();
 }
@@ -467,7 +471,7 @@ for(const tile of tiles){const x=left+(tile.xyz[u]-minU)*size,y=top+(maxV-tile.x
 const missing=layer.tiles.filter(tile=>!tile.xyz).length;
 document.querySelector('#tile-map-summary').textContent=tiles.length+' tiles in this slice · '+layer.seeds+' seeds in this layer · axes '+['X','Y','Z'][u]+'/'+['X','Y','Z'][v]+(missing?' · '+missing+' isolated tiles have no position':'');
 const sizes=new Map();for(const blob of layer.blobs){if(!sizes.has(blob.color))sizes.set(blob.color,{total:0,count:0,target:blob.targetSize,limited:0});const value=sizes.get(blob.color);value.total+=blob.generated;value.count++;if(blob.reason==='boundary')value.limited++;}
-document.querySelector('#blob-size-summary').textContent='Grown sizes before later overpainting: '+[...sizes].map(([color,value])=>'color '+(color+1)+' '+(value.total/value.count).toFixed(1)+' / target '+value.target+(value.limited?' ('+value.limited+' boundary-limited)':'')).join('; ')+'.';
+document.querySelector('#blob-size-summary').textContent=!sizes.size?'Base fill only; no seeded blobs in this layer.':'Grown sizes before later overpainting: '+[...sizes].map(([color,value])=>'color '+(color+1)+' '+(value.total/value.count).toFixed(1)+' / target '+value.target+(value.limited?' ('+value.limited+' boundary-limited)':'')).join('; ')+'.';
 }
 function updateSliceChoices(){
 const layer=currentPaintMap[Number(document.querySelector('#tile-layer').value)];if(!layer)return;

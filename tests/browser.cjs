@@ -47,7 +47,6 @@ const http = require('node:http');
       try {stippleVehicle(source, 12, 42, {...options, replacements: ['invalid']});} catch {rejected = true;}
       return {
         paletteOnly: colors.every(c => replacements.includes(c)),
-        randomSelection: new Set(colors).size === 2,
         perSlot: [first.getAttribute('bc'),first.getAttribute('ac'),first.getAttribute('sc').split(',')[1]].every(c=>replacements.includes(c)) && first.getAttribute('sc').endsWith(',FFFFFF'),
         untouched: parsed.querySelectorAll('o')[1].getAttribute('ac') === '123456' && first.getAttribute('other') === 'stay' && result.xml.includes('<!-- keep -->'),
         repeatable: varied.xml === stippleVehicle(source, 12, 42, options).xml,
@@ -65,7 +64,7 @@ const http = require('node:http');
       const vs=parse(vary.xml),rs=parse(replace.xml);
       return {implicitExpanded:vs[0][0]==='4' && vs[0].length===5,
         independentShades:new Set(vs[0].slice(1)).size>1,
-        independentReplacements:new Set(rs[0].slice(1)).size>1,
+        validReplacementFaces:rs[0].slice(1).every(c=>['112233','AABBCC'].includes(c)),
         unselectedFace:vs[1][4]==='123456' && rs[1][4]==='123456',
         zeroUnchanged:stippleVehicle(source,0,42,{selectedColors:['808080']}).xml===source};
     });
@@ -115,12 +114,12 @@ const http = require('node:http');
       const randomGrowth=frontierExcess(result),weightedGrowth=frontierExcess(weighted),strictGrowth=frontierExcess(strict);
       let strictnessRejected=false;try{growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,1.01);}catch{strictnessRejected=true;}
       const mean=blobs=>blobs.reduce((sum,b)=>sum+b.generated,0)/blobs.length;
-      const overgrown=growSeededCanvas(nodes,neighbors,[6],[2],()=>0.5,2);
+      const overgrown=growSeededCanvas(nodes,neighbors,[0,6],[2,2],()=>0.5,2);
       const averageNodes=Array.from({length:1600},(_,i)=>({xyz:[i%40,Math.floor(i/40),0]}));
       const averageNeighbors=averageNodes.map((_,i)=>[i%40?i-1:-1,i%40<39?i+1:-1,i>=40?i-40:-1,i<1560?i+40:-1].filter(i=>i>=0));
-      const calibrated=growSeededCanvas(averageNodes,averageNeighbors,[12],[24],rng(),2,1);
+      const calibrated=growSeededCanvas(averageNodes,averageNeighbors,[0,12],[24,24],rng(),2,1);
       const actualMean=mean(calibrated.blobs);
-      let zeroRejected=false;try{growSeededCanvas(nodes,neighbors,[0],[12],rng());}catch{zeroRejected=true;}
+      const baseOnly=growSeededCanvas(nodes,neighbors,[0],[12],rng());
       return {validSpacing:valid,minimumScore:minimal,orthogonalGrowth:connected,connectedCounts:counts,
         replayMatches:JSON.stringify(replay)===JSON.stringify(result.colors),
         reservedAnchors:result.seeds.every(seed=>result.colors[seed.tile]===seed.color),
@@ -136,7 +135,9 @@ const http = require('node:http');
         strictAlwaysNearest:strictGrowth.steps>0&&strictGrowth.excess===0,
         intermediateFavorsNear:weightedGrowth.mean<randomGrowth.mean,
         strictnessRejected,
-        zeroRejected};
+        baseOnlyWorks:baseOnly.colors.every(c=>c===0)&&baseOnly.seeds.length===0,
+        baseCanvas:result.initialColors.every(c=>c===0),
+        baseDoesNotGrow:result.seeds.every(seed=>seed.color!==0)};
     });
     for(const [name,passed] of Object.entries(advancedChecks)) assert.equal(passed,true,name);
 
@@ -145,7 +146,12 @@ const http = require('node:http');
       const selected = stippleVehicle(source, 12, 42, {selectedColors:['808080']});
       const root = new DOMParser().parseFromString(selected.xml, 'application/xml');
       const more = '<vehicle><o bc="111111" ac="222222" bc2="333333" bc3="444444"/></vehicle>';
+      const baseOptions={mode:'replace',target:'808080',replacements:['112233'],seedSpacings:[0],groupingSizes:[24]};
+      const base=stippleVehicle(source,0,42,baseOptions),variedBase=stippleVehicle(source,8,42,baseOptions);
+      const shades=variedBase.tileMap.flatMap(layer=>layer.tiles.map(tile=>tile.color));
       return {defaultUnchanged:untouched.xml===source && untouched.preview.length===0,
+        baseFill:base.tileMap.every(layer=>layer.seeds===0&&layer.tiles.every(tile=>tile.color==='112233')),
+        baseVariance:new Set(shades).size>1&&shades.every(color=>[0,2,4].every(i=>Math.abs(parseInt(color.slice(i,i+2),16)-parseInt('112233'.slice(i,i+2),16))<=8)),
         selectedOnly:selected.preview.length===1 && selected.preview[0].color==='808080' && selected.changed_fields>0,
         unselectedIntact:root.querySelector('o').getAttribute('sc').endsWith(',FFFFFF') && root.querySelectorAll('o')[1].getAttribute('ac')==='123456',
         noPreviewCap:stippleVehicle(more,12,42,{selectedColors:['111111','222222','333333','444444']}).preview.length===4};
@@ -241,22 +247,37 @@ const http = require('node:http');
     await page.locator('#mode').selectOption('replace');
     assert.equal(await page.locator('[data-palette="1"] input[type=color]').first().inputValue(),'#abcdef');
     await page.locator('#advanced-options').evaluate(element=>element.open=true);
-    await page.locator('#frequency-controls input[data-index]').first().fill('6');
-    await page.locator('.color-grouping').first().fill('28');
+    await page.locator('#frequency-controls input[data-index]').nth(1).fill('6');
+    await page.locator('.color-grouping').nth(1).fill('28');
     await page.locator('#seed-repulsion').fill('4');
     await page.locator('#growth-strictness').fill('0.75');
     await page.locator('#blob-outliers').fill('3');
-    assert.equal(await page.locator('.frequency-share').first().textContent(),'tiles');
+    assert.equal(await page.locator('.frequency-share').first().textContent(),'Base');
+    assert.ok(await page.locator('.color-grouping').first().isDisabled());
+    assert.ok(await page.locator('#frequency-controls input[data-index]').first().isDisabled());
     await page.locator('[data-palette="1"] .palette-title').click();
     assert.equal(await page.locator('.color-grouping').first().inputValue(),'24');
     assert.equal(await page.locator('#growth-strictness').inputValue(),'0');
     await page.reload();await page.locator('#mode').selectOption('replace');
     await page.locator('[data-palette="0"] .palette-title').click();
-    assert.equal(await page.locator('.color-grouping').first().inputValue(),'28');
+    assert.equal(await page.locator('.color-grouping').nth(1).inputValue(),'28');
     assert.equal(await page.locator('#seed-repulsion').inputValue(),'4');
     assert.equal(await page.locator('#growth-strictness').inputValue(),'0.75');
     assert.equal(await page.locator('#blob-outliers').inputValue(),'3');
+    assert.equal(await page.locator('#frequency-controls input[data-index]').nth(1).inputValue(),'6');
+    await page.getByRole('button',{name:'Move Palette 1 color 2 up',exact:true}).click();
+    assert.equal(await page.locator('#replacements').inputValue(),'#445566, #112233');
     assert.equal(await page.locator('#frequency-controls input[data-index]').first().inputValue(),'6');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'28');
+    assert.ok(await page.locator('.color-grouping').first().isDisabled());
+    assert.ok(await page.getByRole('button',{name:'Move Palette 1 color 1 up',exact:true}).isDisabled());
+    await page.reload();await page.locator('#mode').selectOption('replace');
+    assert.equal(await page.locator('#replacements').inputValue(),'#445566, #112233');
+    assert.equal(await page.locator('.color-grouping').first().inputValue(),'28');
+    await page.getByRole('button',{name:'Move Palette 1 color 1 down',exact:true}).click();
+    assert.equal(await page.locator('#replacements').inputValue(),'#112233, #445566');
+    assert.equal(await page.locator('.color-grouping').nth(1).inputValue(),'28');
+    assert.ok(await page.locator('[data-palette="0"] input[type=color]').first().isEnabled());
     await page.locator('#file').setInputFiles({name:'slice.xml',mimeType:'application/xml',buffer:Buffer.from(source)});
     await page.waitForFunction(()=>!document.querySelector('#tile-map-preview').hidden);
     assert.ok(await page.locator('#tile-layer option').count()>0);
