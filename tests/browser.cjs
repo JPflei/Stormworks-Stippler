@@ -142,6 +142,16 @@ const http = require('node:http');
     });
     for(const [name,passed] of Object.entries(advancedChecks)) assert.equal(passed,true,name);
 
+    const sharedFaceChecks=await page.evaluate(()=>{
+      const source='<vehicle><bodies><body><components>'+Array.from({length:100},(_,i)=>`<o bc="808080" ac="808080" sc="2,808080,808080"><vp x="${i%10}" y="${Math.floor(i/10)}"/></o>`).join('')+'</components></body></bodies></vehicle>';
+      const options={mode:'replace',target:'808080',replacements:['112233','AABBCC'],outliers:0};
+      const result=stippleVehicle(source,0,42,options);
+      const objects=[...new DOMParser().parseFromString(result.xml,'application/xml').querySelectorAll('o')];
+      return objects.every(object=>[object.getAttribute('ac'),...object.getAttribute('sc').split(',').slice(1)].every(color=>color===object.getAttribute('bc')))
+        &&result.tileMap.every(layer=>layer.tiles.every(tile=>tile.color===objects[tile.xyz[1]*10+tile.xyz[0]].getAttribute('bc')));
+    });
+    assert.equal(sharedFaceChecks,true,'All matching face slots and preview layers follow the shared exported spatial field');
+
     const selectionChecks = await page.evaluate(source => {
       const untouched = stippleVehicle(source, 12, 42);
       const selected = stippleVehicle(source, 12, 42, {selectedColors:['808080']});

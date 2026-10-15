@@ -30,7 +30,7 @@ The starting canvas uses the first palette color, with the usual per-slot shade 
 
 ### Tile map and preview
 
-The XML supplies block positions and paint-slot indices, but not a complete catalog of block meshes. The generator therefore uses separate body-local layers for base, accent, and each face-paint slot. Orthogonal neighbors are positions one voxel apart in the same body and slot layer. Unselected colors are holes in that graph. Overlapping duplicate positions in one slot share one logical tile. Paint slots without safe integer positions are isolated tiles and are reported; no geometry is invented for them.
+The XML supplies block positions and paint-slot indices, but not a complete catalog of block meshes. The generator uses one body-local growth graph shared by base, accent, and face-paint slots. Orthogonal neighbors are matching positions one voxel apart in the same body. Positions without any selected paint slots are holes in that graph. Overlapping positions share a growth tile; the preview still separates the exported paint slots into layers. Paint slots without safe integer positions are isolated tiles and are reported; no geometry is invented for them.
 
 **Paint tile map** previews the exact target-color tiles written to the XML. Select a body/slot layer, an X/Y/Z slice axis, and a slice position. Dots mark seed anchors. Colors include the generated variance and outliers. These slices are not an unfolded surface net: reliably unfolding wedges and other custom blocks requires block geometry and face-index mapping that this repository does not yet provide. The 50×50 simulation remains separate from this actual-vehicle layer view; it previews growth on a complete flat grid rather than the vehicle’s holes and disconnected regions. Vary-selected shade previews remain unchanged.
 
@@ -52,3 +52,5 @@ One-time repository setup: open **Settings → Pages**, then set **Source** to *
 If Pages is configured to deploy from the `main` branch root instead, the root `index.html` forwards visitors to the app in `web/`, preventing the README from becoming the homepage. GitHub Actions remains the recommended source because it runs checks before publishing.
 
 The server binds to loopback by default. For a cloud host that provides its own authenticated port access, use `python3 server.py --host 0.0.0.0`. Do not expose it directly to the public internet.
+
+Paint slots on the same body share one spatial blob field, so rotated blocks and different face slots follow the same patches. Per-slot shade variance and outliers remain independent. A layer preview shows only the selected paint slot and slice, rather than the fully rendered vehicle.

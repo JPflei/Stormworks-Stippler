@@ -234,11 +234,23 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   }
   if(replacing){
     graph=buildPaintTileMap(document,target,colors);
+    // Share growth across paint slots: rotated faces must sample the same body-space blobs.
+    const bodies=new Map();
     for(const group of graph.layers){
-      const generated=growSeededCanvas(group.nodes,group.neighbors,weights,groupingSizes,random,repulsion,strictness);
-      group.seeds=generated.seeds;group.blobs=generated.blobs;
-      group.nodes.forEach((node,index)=>{node.colorIndex=generated.colors[index];node.seedColor=-1;});
-      for(const anchor of group.seeds)group.nodes[anchor.tile].seedColor=anchor.color;
+      if(!bodies.has(group.body))bodies.set(group.body,new Map());
+      const nodes=bodies.get(group.body);
+      for(const node of group.nodes)if(!nodes.has(node.key))nodes.set(node.key,{key:node.key,xyz:node.xyz});
+    }
+    for(const [body,tiles] of bodies){
+      const nodes=[...tiles.values()].sort((a,b)=>{if(a.xyz&&b.xyz)return a.xyz[2]-b.xyz[2]||a.xyz[1]-b.xyz[1]||a.xyz[0]-b.xyz[0];return a.key<b.key?-1:a.key>b.key?1:0;});
+      const ids=new Map(nodes.map((node,index)=>[node.key,index]));
+      const neighbors=nodes.map(node=>{const result=[];if(node.xyz)for(let axis=0;axis<3;axis++)for(const step of [-1,1]){const xyz=node.xyz.slice();xyz[axis]+=step;const index=ids.get(xyz.join(','));if(index!==undefined)result.push(index);}return result;});
+      const generated=growSeededCanvas(nodes,neighbors,weights,groupingSizes,random,repulsion,strictness);
+      const anchors=new Map(generated.seeds.map(anchor=>[anchor.tile,anchor.color]));
+      for(const group of graph.layers.filter(group=>group.body===body)){
+        group.seeds=generated.seeds;group.blobs=generated.blobs;
+        for(const node of group.nodes){const index=ids.get(node.key);node.colorIndex=generated.colors[index];node.seedColor=anchors.get(index)??-1;}
+      }
     }
   }
   let objects = 0, paint_fields = 0, changed_fields = 0;
