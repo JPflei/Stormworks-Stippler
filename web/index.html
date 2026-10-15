@@ -41,7 +41,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <p id="advanced-palette"></p>
 <p>The first color fills the canvas (with shade variance). Remaining colors grow in palette order. Move colors up or down to choose the base and layering order. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables an overlay color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
 
-<p>Each color has its own strictness and direction chart (body-local X/Y). Drag from the bottom-center origin; vector length controls directional preference. (0, 0) is neutral. Strictness 0 uses the vector bias alone (random growth for a zero vector). Higher strictness follows distance adjusted by the vector: forward growth costs less, backward growth costs more. At 1, only tiles with the lowest adjusted distance can grow. A zero vector gives compact growth around the seed.</p>
+<p>Each color has its own strictness and polar direction chart (body-local X/Y). Click or drag the tip: the center uses 100% seed distance; the rim uses 100% direction, equally at every angle. Intermediate radii blend both. Strictness controls how closely growth follows that blend; at 1 only the best candidates grow. Arrow keys adjust the vector; Home resets it.</p>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
 <label>Outliers: <output id="outliers-value">5%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="5"></label>
 <div id="frequency-controls"></div>
@@ -75,6 +75,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 </form>
 <footer>Changes base, accent, and face paint colors. Keeps your original file intact. Test the downloaded creation in Stormworks before replacing your saved vehicle.</footer>
 <script>
+function normalizeGrowthVector(v){const scale=Math.max(1,Math.hypot(v.x,v.y));return {x:v.x/scale,y:v.y/scale};}
 /* Finite graph growth. Edges describe orthogonal paint-tile adjacency. */
 function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion = 2, strictness = 0, directions = []) {
   if((Array.isArray(strictness)?strictness:[strictness]).some(value=>!Number.isFinite(value)||value<0||value>1))throw new Error('Growth strictness must be between 0 and 1.');
@@ -135,10 +136,10 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
             const metrics=candidates.map(candidate=>{
               const point=nodes[candidate].xyz;
               const dx=origin&&point?point[0]-origin[0]:0,dy=origin&&point?point[1]-origin[1]:0;
-              const projection=dx*direction.x+dy*direction.y,length=Math.hypot(dx,dy);
-              // Forward travel costs as little as 10% of ordinary graph distance.
-              // The same directional metric drives strictness, including its hard limit at 1.
-              return {distance:growthDistance[candidate]-0.9*projection,bias:length?6*projection/length:0};
+              const radius=Math.min(1,Math.hypot(direction.x,direction.y)),length=Math.hypot(dx,dy);
+              const alignment=radius&&length?(dx*direction.x+dy*direction.y)/(Math.hypot(direction.x,direction.y)*length):0;
+              // Radius blends pure seed distance with pure directional alignment.
+              return {distance:(1-radius)*growthDistance[candidate]+radius*(1-alignment),bias:6*radius*alignment};
             });
             const minimum=Math.min(...metrics.map(metric=>metric.distance));
             const logits=metrics.map(metric=>colorStrictness===1?
@@ -227,7 +228,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const outliers=options.outliers??5,repulsion=options.seedRepulsion??2,strictness=options.growthStrictnesses??options.growthStrictness??0.5;
   if(replacing&&((Array.isArray(strictness)&&strictness.length!==replacements.length)||(Array.isArray(strictness)?strictness:[strictness]).some(value=>!Number.isFinite(value)||value<0||value>1)))throw new Error('Growth strictness must be between 0 and 1.');
   const directions=options.growthDirections??replacements.map(()=>({x:0,y:0}));
-  if(replacing&&(!Array.isArray(directions)||directions.length!==replacements.length||directions.some(v=>!v||!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x< -1||v.x>1||v.y<0||v.y>1)))throw new Error('Growth vectors require x from -1 to 1 and y from 0 to 1.');
+  if(replacing&&(!Array.isArray(directions)||directions.length!==replacements.length||directions.some(v=>!v||!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x< -1||v.x>1||v.y< -1||v.y>1)))throw new Error('Growth vectors require x from -1 to 1 and y from -1 to 1.');
   if(replacing&&(!Number.isFinite(outliers)||outliers<0||outliers>10))throw new Error('Outliers must be between 0 and 10 percent.');
   if(replacing&&(!Number.isFinite(repulsion)||repulsion<0||repulsion>10))throw new Error('Seed repulsion must be between 0 and 10.');
   // Coordinate hashing makes patches repeatable regardless of XML component order.
@@ -357,7 +358,7 @@ savedAdvanced=stored.advanced.map(value=>({
 weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&w>=0&&w<=100?w:8):[],
 groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=512?g:10):[],
 strictnesses:Array.isArray(value?.strictnesses)?value.strictnesses.map(v=>Number.isFinite(v)&&v>=0&&v<=1?v:0.5):[],
-directions:Array.isArray(value?.directions)?value.directions.map(v=>v&&Number.isFinite(v.x)&&Number.isFinite(v.y)&&v.x>=-1&&v.x<=1&&v.y>=0&&v.y<=1?v:{x:0,y:0}):[],
+directions:Array.isArray(value?.directions)?value.directions.map(v=>v&&Number.isFinite(v.x)&&Number.isFinite(v.y)&&v.x>=-1&&v.x<=1&&v.y>=-1&&v.y<=1?normalizeGrowthVector(v):{x:0,y:0}):[],
 seedRepulsion:Number.isFinite(value?.seedRepulsion)&&value.seedRepulsion>=0&&value.seedRepulsion<=10?value.seedRepulsion:2,
 growthStrictness:Number.isFinite(value?.growthStrictness)&&value.growthStrictness>=0&&value.growthStrictness<=1?value.growthStrictness:0.5,
 outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:5,
@@ -453,12 +454,13 @@ groupLabel.append(group);row.append(chip,text,input,share,groupLabel);
 const strictLabel=document.createElement('label');strictLabel.style.gridColumn='1 / -1';
 const strictOutput=document.createElement('span'),strict=document.createElement('input');strict.type='range';strict.min='0';strict.max='1';strict.step='0.01';strict.className='color-strictness';strict.value=String(savedAdvanced[activePalette].strictnesses[index]);strict.disabled=index===0;strict.setAttribute('aria-label','Growth strictness of '+color);
 const updateStrict=()=>strictOutput.textContent='Strictness: '+Number(strict.value).toFixed(2);updateStrict();strict.addEventListener('input',()=>{savedAdvanced[activePalette].strictnesses[index]=Number(strict.value);updateStrict();savePalettes();});strictLabel.append(strictOutput,strict);row.append(strictLabel);
-const chart=document.createElement('canvas');chart.width=240;chart.height=120;chart.className='splat-chart';chart.style.cssText='grid-column:1 / -1;max-width:100%;touch-action:none;border:1px solid #516875;border-radius:8px;'+(index===0?'opacity:.4':'');chart.setAttribute('aria-label','Growth direction of '+color);
-const controls=document.createElement('div');controls.style.gridColumn='1 / -1';const coordinates=[];
-function draw(){const v=savedAdvanced[activePalette].directions[index],ctx=chart.getContext('2d');ctx.clearRect(0,0,240,120);ctx.strokeStyle='#516875';ctx.beginPath();ctx.moveTo(120,0);ctx.lineTo(120,115);ctx.moveTo(5,115);ctx.lineTo(235,115);ctx.stroke();ctx.strokeStyle=color;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(120,115);ctx.lineTo(120+v.x*110,115-v.y*105);ctx.stroke();ctx.fillStyle=color;ctx.beginPath();ctx.arc(120+v.x*110,115-v.y*105,6,0,Math.PI*2);ctx.fill();coordinates.forEach((input,i)=>input.value=String(v[i===0?'x':'y']));}
-for(const axis of ['x','y']){const label=document.createElement('label');label.textContent=axis.toUpperCase();const coordinate=document.createElement('input');coordinate.type='number';coordinate.min=axis==='x'?'-1':'0';coordinate.max='1';coordinate.step='0.01';coordinate.disabled=index===0;coordinate.className='direction-'+axis;coordinate.setAttribute('aria-label','Growth direction '+axis+' of '+color);coordinate.addEventListener('input',()=>{savedAdvanced[activePalette].directions[index][axis]=Math.max(Number(coordinate.min),Math.min(1,Number(coordinate.value)||0));draw();savePalettes();});coordinates.push(coordinate);label.append(coordinate);controls.append(label);}
-function move(event){if(index===0)return;const bounds=chart.getBoundingClientRect();savedAdvanced[activePalette].directions[index]={x:Math.round(Math.max(-1,Math.min(1,(event.clientX-bounds.left)*240/bounds.width/110-120/110))*100)/100,y:Math.round(Math.max(0,Math.min(1,(115-(event.clientY-bounds.top)*120/bounds.height)/105))*100)/100};draw();savePalettes();chart.dispatchEvent(new Event('input',{bubbles:true}));}
-chart.addEventListener('pointerdown',event=>{if(index===0)return;chart.setPointerCapture(event.pointerId);move(event);});chart.addEventListener('pointermove',event=>{if(chart.hasPointerCapture(event.pointerId))move(event);});chart.addEventListener('pointerup',event=>{if(chart.hasPointerCapture(event.pointerId))chart.releasePointerCapture(event.pointerId);});draw();row.append(chart,controls);list.append(row);});updateFrequencySummary();
+const chart=document.createElement('canvas');chart.width=240;chart.height=240;chart.className='splat-chart';chart.style.cssText='grid-column:1 / -1;width:240px;max-width:100%;touch-action:none;border:1px solid #516875;border-radius:8px;'+(index===0?'opacity:.4':'');chart.tabIndex=index===0?-1:0;chart.setAttribute('role','group');chart.setAttribute('aria-label','Polar growth vector of '+color+'. Arrow keys move; Home resets.');
+const caption=document.createElement('span');caption.style.gridColumn='1 / -1';caption.className='splat-caption';
+function draw(){const v=savedAdvanced[activePalette].directions[index],ctx=chart.getContext('2d'),radius=Math.hypot(v.x,v.y);ctx.clearRect(0,0,240,240);ctx.strokeStyle='#516875';ctx.lineWidth=1;for(const r of [55,110]){ctx.beginPath();ctx.arc(120,120,r,0,Math.PI*2);ctx.stroke();}ctx.beginPath();ctx.moveTo(10,120);ctx.lineTo(230,120);ctx.moveTo(120,10);ctx.lineTo(120,230);ctx.stroke();ctx.strokeStyle=color;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(120,120);ctx.lineTo(120+v.x*110,120-v.y*110);ctx.stroke();ctx.fillStyle=color;ctx.beginPath();ctx.arc(120+v.x*110,120-v.y*110,6,0,Math.PI*2);ctx.fill();caption.textContent=Math.round((1-radius)*100)+'% seed distance / '+Math.round(radius*100)+'% direction';chart.dataset.x=String(v.x);chart.dataset.y=String(v.y);}
+function setVector(v){if(index===0)return;savedAdvanced[activePalette].directions[index]=normalizeGrowthVector(v);draw();savePalettes();chart.dispatchEvent(new Event('input',{bubbles:true}));}
+function move(event){const bounds=chart.getBoundingClientRect();setVector({x:((event.clientX-bounds.left)*240/bounds.width-120)/110,y:(120-(event.clientY-bounds.top)*240/bounds.height)/110});}
+chart.addEventListener('pointerdown',event=>{if(index===0)return;event.preventDefault();chart.focus();chart.setPointerCapture(event.pointerId);move(event);});chart.addEventListener('pointermove',event=>{if(chart.hasPointerCapture(event.pointerId))move(event);});for(const name of ['pointerup','pointercancel'])chart.addEventListener(name,event=>{if(chart.hasPointerCapture(event.pointerId))chart.releasePointerCapture(event.pointerId);});
+chart.addEventListener('keydown',event=>{const v={...savedAdvanced[activePalette].directions[index]},step=event.shiftKey?0.1:0.02;if(event.key==='Home'){v.x=0;v.y=0;}else if(event.key==='ArrowLeft')v.x-=step;else if(event.key==='ArrowRight')v.x+=step;else if(event.key==='ArrowUp')v.y+=step;else if(event.key==='ArrowDown')v.y-=step;else return;event.preventDefault();setVector(v);});draw();row.append(chart,caption);list.append(row);});updateFrequencySummary();
 }
 
 document.querySelector('#seed-repulsion').addEventListener('input',event=>{const value=Number(event.target.value);savedAdvanced[activePalette].seedRepulsion=Number.isFinite(value)?Math.max(0,Math.min(10,value)):2;savePalettes();});
