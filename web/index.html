@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stormworks Stippler</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#10191e;color:#e9f1f2}body{max-width:680px;margin:8vh auto;padding:24px}small{color:#6fe0bc;letter-spacing:.15em}h1{font-size:clamp(32px,7vw,52px);line-height:1.1}p{color:#aec1c9;line-height:1.65}form{background:#1b2a32;border:1px solid #354a55;border-radius:18px;padding:28px;display:grid;gap:24px}label{display:grid;gap:10px}input{font:inherit}input[type=file],input[type=number]{padding:12px;background:#10191e;border:1px solid #516875;border-radius:8px;color:inherit}button,a.download{background:#6fe0bc;color:#10251e;padding:14px 20px;border:0;border-radius:8px;font:inherit;font-weight:700;cursor:pointer;text-align:center;text-decoration:none}button:disabled{opacity:.5;cursor:wait}[hidden]{display:none!important}#status{white-space:pre-wrap}footer{font-size:13px;margin-top:24px;color:#aec1c9}
+</style>
+<style>
+.palette{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.color-card{min-width:0}.swatch{height:42px;border:1px solid #ffffff30;border-radius:6px;margin:10px 0}.mosaic{display:grid;grid-template-columns:repeat(8,1fr);border:1px solid #ffffff30;border-radius:6px;overflow:hidden;margin:10px 0}.mosaic span{aspect-ratio:1}.color-card p{font-size:12px;margin:4px 0}.color-card code{font-size:13px}#preview h2{font-size:20px;margin:0}#preview-note{font-size:13px}@media(max-width:450px){.palette{gap:8px}form{padding:18px}}
+</style>
+<small>STORMWORKS / PAINT TOOLS</small>
+<h1>A little texture.<br>A lot of character.</h1>
+<p>Give your creation subtle variations in paint. Upload a vehicle XML, choose an intensity, and download a new copy.</p>
+<form id="form">
+<label>Vehicle XML<input id="file" type="file" accept=".xml,text/xml,application/xml" required></label>
+<label>Shade variation <span><output id="amount">12</output> / 50</span><input id="strength" type="range" min="0" max="50" value="12"></label>
+<label>Random seed<input id="seed" type="number" value="0" step="1" min="-2147483648" max="2147483647" required></label>
+<section id="preview" hidden aria-label="Paint color preview">
+<h2>Your top paint colors</h2>
+<p id="preview-note">Ranked by paint-color occurrences, including face colors. Tiles sample actual output shades; they don’t show block positions or in-game lighting.</p>
+<p id="preview-status" role="status" aria-live="polite"></p>
+<div id="palette" class="palette"></div>
+</section>
+<button id="submit">Add paint variation</button>
+<a id="download" class="download" hidden>Download painted XML</a>
+<p id="status" role="status" aria-live="polite"></p>
+</form>
+<footer>Changes base, accent, and face paint colors. Keeps your original file intact. Test the downloaded creation in Stormworks before replacing your saved vehicle.</footer>
+<script>
+/* Browser-local XML conversion. Preserve original text outside paint values. */
+function stippleVehicle(source, strength = 12, seed = 0) {
+  if (!Number.isInteger(strength) || strength < 0 || strength > 50) throw new Error('Strength must be a whole number between 0 and 50.');
+  if (!Number.isInteger(seed)) throw new Error('Seed must be a whole number.');
+  if (/<!\s*(?:DOCTYPE|ENTITY)\b/i.test(source)) throw new Error('XML containing DTDs or entities is not supported.');
+  const document = new DOMParser().parseFromString(source, 'application/xml');
+  if (document.querySelector('parsererror')) throw new Error('Invalid XML. Please choose a Stormworks vehicle XML file.');
+  if (document.documentElement.tagName !== 'vehicle') throw new Error('Expected a Stormworks <vehicle> XML document.');
+  let state = seed >>> 0;
+  function random() {
+    state += 0x6D2B79F5;
+    let t = Math.imul(state ^ state >>> 15, 1 | state);
+    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+  const hex = /^[0-9a-f]{6}$/i;
+  const paint = /([\s](sc|bc|ac|bc2|bc3)\s*=\s*)(["'])([^"']*)\3/g;
+  const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+  function colors(name, value) {
+    if (hex.test(value)) return {parts: [value], start: 0};
+    const parts = value.split(',');
+    if (name === 'sc' && /^\d+$/.test(parts[0]) && parts.length > 1 && parts.slice(1).every(p => hex.test(p))) return {parts, start: 1};
+    return null;
+  }
+  let objects = 0, paint_fields = 0, changed_fields = 0;
+  const counts = new Map();
+  const xml = source.replace(tags, tag => {
+    if (!/^<o(?:\s|\/?>)/.test(tag)) return tag;
+    const matches = [...tag.matchAll(paint)];
+    if (!matches.some(m => colors(m[2], m[4]))) return tag;
+    objects++;
+    const offset = Math.floor(random() * (strength * 2 + 1)) - strength;
+    return tag.replace(paint, (all, prefix, name, quote, value) => {
+      const parsed = colors(name, value);
+      if (!parsed) return all;
+      const {parts, start} = parsed;
+      for (let i = start; i < parts.length; i++) {
+        const original = parts[i].toUpperCase();
+        const result = [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(original.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
+        paint_fields++;
+        if (result !== original) { changed_fields++; parts[i] = result; }
+        if (!counts.has(original)) counts.set(original, {color: original, count: 0, shades: new Map()});
+        const entry = counts.get(original); entry.count++;
+        entry.shades.set(result, (entry.shades.get(result) || 0) + 1);
+      }
+      return prefix + quote + parts.join(',') + quote;
+    });
+  });
+  if (!paint_fields) throw new Error('No supported vehicle paint colors were found in this file.');
+  const preview = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 3).map(entry => {
+    const variants = [...entry.shades];
+    const samples = Array.from({length: 64}, () => {
+      let target = random() * entry.count;
+      for (const [color, count] of variants) { target -= count; if (target < 0) return color; }
+      return variants[variants.length - 1][0];
+    });
+    return {color: entry.color, count: entry.count, samples};
+  });
+  return {xml, objects, paint_fields, changed_fields, preview};
+}
+
+</script>
+<script>
+const form=document.querySelector('#form'),file=document.querySelector('#file'),strength=document.querySelector('#strength'),seed=document.querySelector('#seed'),status=document.querySelector('#status'),download=document.querySelector('#download'),button=document.querySelector('#submit');
+let url, previewTimer, previewVersion=0;
+const preview=document.querySelector('#preview'),palette=document.querySelector('#palette'),previewStatus=document.querySelector('#preview-status');
+let cachedFile, cachedText;
+async function readFile(selected){if(cachedFile!==selected){cachedFile=selected;cachedText=selected.text();}return cachedText;}
+function renderPreview(colors){
+palette.replaceChildren();
+for(const item of colors){
+const card=document.createElement('div');card.className='color-card';
+const name=document.createElement('code');name.textContent='#'+item.color;
+const count=document.createElement('p');count.textContent=item.count.toLocaleString()+' occurrences';
+const originalLabel=document.createElement('p');originalLabel.textContent='Original';
+const original=document.createElement('div');original.className='swatch';original.style.backgroundColor='#'+item.color;original.setAttribute('aria-label','Original color #'+item.color);
+const label=document.createElement('p');label.textContent='With variation';
+const mosaic=document.createElement('div');mosaic.className='mosaic';mosaic.setAttribute('role','img');mosaic.setAttribute('aria-label','Sample varied shades of #'+item.color);
+for(const color of item.samples){const tile=document.createElement('span');tile.style.backgroundColor='#'+color;tile.title='#'+color;mosaic.append(tile);}
+card.append(name,count,originalLabel,original,label,mosaic);palette.append(card);
+}}
+async function updatePreview(version){
+const selected=file.files[0];if(!selected)return;
+try{
+if(selected.size>19*1024*1024)throw new Error('Choose an XML file smaller than 19 MB.');
+const settings={strength:Number(strength.value),seed:Number(seed.value)};
+if(!seed.validity.valid)throw new Error('Enter a whole-number seed in the supported range.');
+const data=stippleVehicle(await readFile(selected),settings.strength,settings.seed);if(version!==previewVersion)return;
+renderPreview(data.preview);previewStatus.textContent='';
+}catch(error){if(version===previewVersion){palette.replaceChildren();previewStatus.textContent=error.message;}}
+}
+form.addEventListener('input',()=>{
+clearTimeout(previewTimer);const version=++previewVersion;
+preview.hidden=!file.files.length;previewStatus.textContent='';
+if(!file.files.length)palette.replaceChildren();
+if(file.files.length)previewTimer=setTimeout(()=>updatePreview(version),180);
+});
+function clearDownload(){download.hidden=true;if(url){URL.revokeObjectURL(url);url=null;}}
+form.addEventListener('input',()=>{clearDownload();status.textContent='';document.querySelector('#amount').value=strength.value;});
+form.addEventListener('submit',async event=>{
+event.preventDefault();clearDownload();const selected=file.files[0];if(!selected)return;
+if(selected.size>19*1024*1024){status.textContent='Choose an XML file smaller than 19 MB.';return;}
+button.disabled=true;status.textContent='Adding paint variation…';
+const version=previewVersion;
+try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value));if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+'-stippled.xml';download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed across ${data.objects} painted objects.`;}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{button.disabled=false;}
+});
+</script>
+</html>
