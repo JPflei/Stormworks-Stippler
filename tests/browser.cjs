@@ -37,11 +37,34 @@ const assert = require('node:assert/strict');
       };
     }, source);
     for (const [name, passed] of Object.entries(checks)) assert.equal(passed, true, name);
+    const selectionChecks = await page.evaluate(source => {
+      const untouched = stippleVehicle(source, 12, 42);
+      const selected = stippleVehicle(source, 12, 42, {selectedColors:['808080']});
+      const root = new DOMParser().parseFromString(selected.xml, 'application/xml');
+      const more = '<vehicle><o bc="111111" ac="222222" bc2="333333" bc3="444444"/></vehicle>';
+      return {defaultUnchanged:untouched.xml===source && untouched.preview.length===0,
+        selectedOnly:selected.preview.length===1 && selected.preview[0].color==='808080' && selected.changed_fields>0,
+        unselectedIntact:root.querySelector('o').getAttribute('sc').endsWith(',FFFFFF') && root.querySelectorAll('o')[1].getAttribute('ac')==='123456',
+        noPreviewCap:stippleVehicle(more,12,42,{selectedColors:['111111','222222','333333','444444']}).preview.length===4};
+    }, source);
+    for(const [name,passed] of Object.entries(selectionChecks)) assert.equal(passed,true,name);
     await page.locator('#file').setInputFiles({name:'example.xml', mimeType:'application/xml', buffer:Buffer.from(source)});
+    await page.waitForFunction(() => document.querySelectorAll('#vary-colors input').length === 3);
+    assert.equal(await page.locator('#vary-colors input:checked').count(),0);
+    assert.equal(await page.locator('.color-card').count(),0);
+    assert.ok(await page.locator('#submit').isDisabled());
+    for(const checkbox of await page.locator('#vary-colors input').all()) await checkbox.check();
     await page.waitForFunction(() => document.querySelectorAll('.color-card').length === 3);
-    assert.equal(await page.locator('.target-choice').count(), 3);
-    assert.equal(await page.locator('.target-choice .target-chip').first().evaluate(e => e.style.backgroundColor), 'rgb(128, 128, 128)');
+    await page.locator('#vary-colors input[value="123456"]').uncheck();
+    await page.waitForFunction(() => document.querySelectorAll('.color-card').length === 2);
+    assert.equal(await page.locator('#target-colors .target-choice').count(), 3);
+    assert.equal(await page.locator('#target-colors .target-choice .target-chip').first().evaluate(e => e.style.backgroundColor), 'rgb(128, 128, 128)');
     await page.locator('#mode').selectOption('replace');
+    await page.locator('#replacements').fill('#225588, #AA7733');
+    assert.equal(await page.locator('#replacement-cards .target-choice').count(),2);
+    await page.getByRole('button',{name:'Remove replacement #225588',exact:true}).click();
+    assert.equal(await page.locator('#replacements').inputValue(),'#AA7733');
+    assert.equal(await page.locator('#replacement-cards .target-choice').count(),1);
     await page.locator('#replacements').fill('#225588, #AA7733');
     await page.locator('#strength').fill('0');
     await page.waitForFunction(() => document.querySelectorAll('.color-card').length === 3 && [...document.querySelector('.mosaic').children].every(e => ['#225588','#AA7733'].includes(e.title)));
@@ -61,6 +84,10 @@ const assert = require('node:assert/strict');
     await page.locator('#submit').click();
     await page.waitForFunction(() => !document.querySelector('#download').hidden);
     assert.equal(await page.locator('#download').getAttribute('download'), 'example-repainted.xml');
+    await page.locator('#file').setInputFiles({name:'new.xml',mimeType:'application/xml',buffer:Buffer.from(source)});
+    await page.locator('#mode').selectOption('vary');
+    await page.waitForFunction(() => document.querySelectorAll('#vary-colors input').length===3 && document.querySelectorAll('.color-card').length===0);
+    assert.equal(await page.locator('#vary-colors input:checked').count(),0);
     assert.deepEqual(errors, []);
     console.log('Browser replacement mode, preview, download, variance and preservation checks passed.');
   } finally {

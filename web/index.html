@@ -10,17 +10,20 @@
 .palette{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.color-card{min-width:0}.swatch{height:42px;border:1px solid #ffffff30;border-radius:6px;margin:10px 0}.mosaic{display:grid;grid-template-columns:repeat(8,1fr);border:1px solid #ffffff30;border-radius:6px;overflow:hidden;margin:10px 0}.mosaic span{aspect-ratio:1}.color-card p{font-size:12px;margin:4px 0}.color-card code{font-size:13px}#preview h2{font-size:20px;margin:0}#preview-note{font-size:13px}@media(max-width:450px){.palette{gap:8px}form{padding:18px}}
 select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inherit;border:1px solid #516875;border-radius:8px;min-width:0;width:100%;box-sizing:border-box}#replacement{display:grid;gap:18px}.add-color{display:flex;align-items:center;gap:12px}.add-color input{height:42px;width:60px}.add-color button{font-size:14px;padding:10px}
 .target-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-size:12px;text-align:left}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}
+.remove-color{margin-left:auto;padding:2px 6px;background:transparent;color:#e9f1f2;font-size:20px;line-height:1}.target-choice:has(input:checked){border-color:#6fe0bc}#replacement-cards .target-choice{font-weight:700}#vary-colors label{display:flex}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
 <p>Give your creation subtle variations in paint. Upload a vehicle XML, choose an intensity, and download a new copy.</p>
 <form id="form">
 <label>Vehicle XML<input id="file" type="file" accept=".xml,text/xml,application/xml" required></label>
-<label>Paint mode<select id="mode"><option value="vary">Vary all paint colors</option><option value="replace">Replace one paint color</option></select></label>
+<label>Paint mode<select id="mode"><option value="vary">Vary selected paint colors</option><option value="replace">Replace one paint color</option></select></label>
+<section id="vary-selection"><p>Select colors to vary. Unselected paint stays unchanged.</p><div id="vary-colors" class="target-colors" role="group" aria-label="Paint colors to vary"></div></section>
 <section id="replacement" hidden>
 <label>Color to replace<select id="target"><option value="">Upload a creation first</option></select></label>
 <div id="target-colors" class="target-colors" role="group" aria-label="Choose a paint color to replace"></div>
 <label>Replacement colors (hex, separated by commas)<input id="replacements" type="text" value="#62734D, #988563, #3C4934" spellcheck="false"></label>
+<div id="replacement-cards" class="target-colors" aria-label="Replacement colors"></div>
 <div class="add-color"><input id="color-picker" type="color" value="#62734d" aria-label="Choose a replacement color"><button id="add-color" type="button">Add color</button></div>
 <p>Exact color matches only. Each matching block randomly picks one replacement, shared across its matching faces and accents. All other colors stay unchanged.</p>
 </section>
@@ -55,6 +58,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   }
   const hex = /^[0-9a-f]{6}$/i;
   const replacing = options.mode === 'replace';
+  const selection = new Set((options.selectedColors || []).map(c => String(c).replace(/^#/, '').toUpperCase()));
   const target = String(options.target || '').replace(/^#/, '').toUpperCase();
   const replacements = (options.replacements || []).map(c => String(c).trim().replace(/^#/, '').toUpperCase());
   if (replacing && !hex.test(target)) throw new Error('Choose a color from your creation to replace.');
@@ -90,7 +94,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
         const matchesTarget = original === target;
         if (replacing && matchesTarget) matched_fields++;
         const base = replacing ? replacement : original;
-        const result = replacing && !matchesTarget ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
+        const result = (replacing ? !matchesTarget : !selection.has(original)) ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
         paint_fields++;
         if (result !== original) { changed_fields++; parts[i] = result; }
         if (!counts.has(original)) counts.set(original, {color: original, count: 0, shades: new Map()});
@@ -103,7 +107,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   if (!paint_fields) throw new Error('No supported vehicle paint colors were found in this file.');
   if (replacing && !matched_fields) throw new Error('The selected color was not found in this creation. Choose another color.');
   const ranked = [...counts.values()].sort((a, b) => b.count - a.count);
-  const previewEntries = replacing ? [counts.get(target), ...ranked.filter(e => e.color !== target)].slice(0, 3) : ranked.slice(0, 3);
+  const previewEntries = replacing ? [counts.get(target), ...ranked.filter(e => e.color !== target)].slice(0, 3) : ranked.filter(e => selection.has(e.color));
   const preview = previewEntries.map(entry => {
     const variants = [...entry.shades];
     const samples = Array.from({length: 64}, () => {
@@ -124,8 +128,31 @@ const preview=document.querySelector('#preview'),palette=document.querySelector(
 let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
 let paletteFile;
-function conversionOptions(){return {mode:mode.value,target:target.value,replacements:replacements.value.split(',')};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Your top paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Add paint variation';for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+const selectedColors=new Set();
+function conversionOptions(){return {mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function renderVaryColors(colors){
+const list=document.querySelector('#vary-colors');list.replaceChildren();
+for(const item of colors){const label=document.createElement('label');label.className='target-choice';label.style.cursor='pointer';
+const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.value=item.color;checkbox.setAttribute('aria-label','Vary #'+item.color);
+const chip=document.createElement('span');chip.className='target-chip';chip.style.backgroundColor='#'+item.color;chip.setAttribute('aria-hidden','true');
+const name=document.createElement('span');name.textContent='#'+item.color+' · '+item.count.toLocaleString();
+checkbox.addEventListener('input',()=>{if(checkbox.checked)selectedColors.add(item.color);else selectedColors.delete(item.color);});
+label.append(checkbox,chip,name);list.append(label);}
+}
+function renderReplacementCards(){
+const list=document.querySelector('#replacement-cards');list.replaceChildren();
+const entries=replacements.value.split(',').map(c=>c.trim()).filter(Boolean);
+entries.forEach((color,index)=>{const card=document.createElement('div');card.className='target-choice';
+const normalized=color.replace(/^#/,'').toUpperCase();const valid=/^[0-9A-F]{6}$/.test(normalized);
+const chip=document.createElement('span');chip.className='target-chip';if(valid)chip.style.backgroundColor='#'+normalized;
+const name=document.createElement('span');name.textContent=valid?'#'+normalized:color;
+const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove replacement '+name.textContent);
+remove.addEventListener('click',()=>{entries.splice(index,1);replacements.value=entries.join(', ');replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+card.append(chip,name,remove);list.append(card);});
+}
+replacements.addEventListener('input',renderReplacementCards);
+renderReplacementCards();
 function renderTargetColors(colors){
 const list=document.querySelector('#target-colors');list.replaceChildren();
 for(const item of colors){const choice=document.createElement('button');choice.type='button';choice.className='target-choice';choice.dataset.color=item.color;choice.setAttribute('aria-pressed',String(item.color===target.value));
@@ -159,13 +186,15 @@ if(paletteFile!==selected){
 const original=stippleVehicle(source,0,0);target.replaceChildren();
 for(const item of original.colors){const option=document.createElement('option');option.value=item.color;option.textContent='#'+item.color+' — '+item.count.toLocaleString()+' occurrences';target.append(option);}
 renderTargetColors(original.colors);
+selectedColors.clear();renderVaryColors(original.colors);
 paletteFile=selected;
 }
 const data=stippleVehicle(source,settings.strength,settings.seed,conversionOptions());if(version!==previewVersion)return;
-renderPreview(data.preview);syncMode();previewStatus.textContent='';
+renderPreview(data.preview);syncMode();previewStatus.textContent=mode.value!=='replace'&&!selectedColors.size?'Select colors above to see their previews.':'';
 }catch(error){if(version===previewVersion){palette.replaceChildren();previewStatus.textContent=error.message;}}
 }
-form.addEventListener('input',()=>{
+form.addEventListener('input',event=>{
+if(event.target===file){selectedColors.clear();paletteFile=null;document.querySelector('#vary-colors').replaceChildren();palette.replaceChildren();}
 syncMode();
 clearTimeout(previewTimer);const version=++previewVersion;
 preview.hidden=!file.files.length;previewStatus.textContent='';
@@ -176,10 +205,12 @@ function clearDownload(){download.hidden=true;if(url){URL.revokeObjectURL(url);u
 form.addEventListener('input',()=>{clearDownload();status.textContent='';document.querySelector('#amount').value=strength.value;});
 form.addEventListener('submit',async event=>{
 event.preventDefault();clearDownload();const selected=file.files[0];if(!selected)return;
+if(mode.value!=='replace'&&!selectedColors.size){status.textContent='Select at least one color to vary.';return;}
 if(selected.size>19*1024*1024){status.textContent='Choose an XML file smaller than 19 MB.';return;}
 button.disabled=true;status.textContent='Adding paint variation…';
 const version=previewVersion;
-try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`);}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{button.disabled=false;}
+try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`);}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
 });
+syncMode();
 </script>
 </html>
