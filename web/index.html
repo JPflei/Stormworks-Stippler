@@ -40,10 +40,10 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <summary>Advanced options</summary>
 <p id="advanced-palette"></p>
 <p>The first color fills the canvas (with shade variance). Remaining colors grow in palette order. Move colors up or down to choose the base and layering order. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables an overlay color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
-<label>Growth strictness: <output id="growth-strictness-value">0.00</output><input id="growth-strictness" type="range" min="0" max="1" step="0.01" value="0"></label>
+<label>Growth strictness: <output id="growth-strictness-value">0.50</output><input id="growth-strictness" type="range" min="0" max="1" step="0.01" value="0.5"></label>
 <p>0 picks randomly from the connected frontier. Higher values favor tiles closer to the seed; 1 always chooses the nearest available tile. Distance follows orthogonal tile links.</p>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
-<label>Outliers: <output id="outliers-value">0%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="0"></label>
+<label>Outliers: <output id="outliers-value">5%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="5"></label>
 <div id="frequency-controls"></div>
 <p id="frequency-summary" role="status"></p>
 </details>
@@ -207,10 +207,10 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   if (replacing && !hex.test(target)) throw new Error('Choose a color from your creation to replace.');
   if (replacing && (!replacements.length || replacements.some(c => !hex.test(c)))) throw new Error('Add at least one valid replacement color to the selected palette.');
   const weights = options.seedSpacings ?? options.frequencies ?? options.weights ?? replacements.map(()=>8);
-  const groupingSizes = options.groupingSizes === undefined ? replacements.map(() => options.groupingSize ?? 24) : options.groupingSizes;
+  const groupingSizes = options.groupingSizes === undefined ? replacements.map(() => options.groupingSize ?? 10) : options.groupingSizes;
   if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100))) throw new Error('Seed spacing must be a whole number from 0 to 100 (0 disables an overlay color).');
   if (replacing && (!Array.isArray(groupingSizes) || groupingSizes.length !== replacements.length || groupingSizes.some(g=>!Number.isInteger(g)||g<1||g>512))) throw new Error('Blob size must be a whole number from 1 to 512 connected tiles.');
-  const outliers=options.outliers??0,repulsion=options.seedRepulsion??2,strictness=options.growthStrictness??0;
+  const outliers=options.outliers??5,repulsion=options.seedRepulsion??2,strictness=options.growthStrictness??0.5;
   if(replacing&&(!Number.isFinite(strictness)||strictness<0||strictness>1))throw new Error('Growth strictness must be between 0 and 1.');
   if(replacing&&(!Number.isFinite(outliers)||outliers<0||outliers>10))throw new Error('Outliers must be between 0 and 10 percent.');
   if(replacing&&(!Number.isFinite(repulsion)||repulsion<0||repulsion>10))throw new Error('Seed repulsion must be between 0 and 10.');
@@ -318,7 +318,7 @@ const paletteStorageKey='stormworks-stippler.seed-growth-palettes.v1';
 const paletteNames=['Desert camo','Woods camo','Arctic camo'];
 const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
 let savedPalettes=defaultPalettes.slice(),activePalette=0;
-let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSizes:[],seedRepulsion:2,outliers:0,growthStrictness:0}));
+let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSizes:[],seedRepulsion:2,outliers:5,growthStrictness:0.5}));
 try{
 const blobSettings=JSON.parse(localStorage.getItem(paletteStorageKey));
 const stored=blobSettings || JSON.parse(localStorage.getItem('stormworks-stippler.blob-palettes.v1')) || JSON.parse(localStorage.getItem('stormworks-stippler.palettes.v1'));
@@ -327,10 +327,10 @@ savedPalettes=stored.colors.map((colors,index)=>colors==='#62734D, #988563, #3C4
 if(blobSettings && Array.isArray(stored.advanced) && stored.advanced.length===3){
 savedAdvanced=stored.advanced.map(value=>({
 weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&w>=0&&w<=100?w:8):[],
-groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=512?g:24):[],
+groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=512?g:10):[],
 seedRepulsion:Number.isFinite(value?.seedRepulsion)&&value.seedRepulsion>=0&&value.seedRepulsion<=10?value.seedRepulsion:2,
-growthStrictness:Number.isFinite(value?.growthStrictness)&&value.growthStrictness>=0&&value.growthStrictness<=1?value.growthStrictness:0,
-outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:0,
+growthStrictness:Number.isFinite(value?.growthStrictness)&&value.growthStrictness>=0&&value.growthStrictness<=1?value.growthStrictness:0.5,
+outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:5,
 }));
 }
 if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)activePalette=stored.active;
@@ -393,7 +393,7 @@ renderAdvanced();
 function normalizeAdvanced(index){
 const entries=savedPalettes[index].split(',').map(c=>c.trim()).filter(Boolean);
 savedAdvanced[index].weights=entries.map((_,i)=>savedAdvanced[index].weights[i]??8);
-savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].groupingSizes[i]??24);
+savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].groupingSizes[i]??10);
 
 }
 function updateFrequencySummary(){
@@ -529,5 +529,7 @@ const version=previewVersion;
 try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`)+(mode.value==='replace'&&data.unpositioned_objects?` ${data.unpositioned_objects} objects have no usable positions; their paint slots are treated as isolated tiles.`:'');}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
 });
 syncMode();
+for(let index=0;index<3;index++)normalizeAdvanced(index);
+savePalettes();
 </script>
 </html>
