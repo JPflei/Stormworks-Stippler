@@ -33,7 +33,6 @@ const assert = require('node:assert/strict');
         repeatable: varied.xml === stippleVehicle(source, 12, 42, options).xml,
         previewMatches: result.preview[0].color === '808080' && result.preview[0].samples.every(c => replacements.includes(c)),
         varianceWorks: varied.xml !== result.xml,
-        finalSampleMatches: result.final_preview.length === 256 && result.final_preview.every(([before, after]) => before === '808080' ? replacements.includes(after) : before === after),
         rejected,
       };
     }, source);
@@ -46,8 +45,6 @@ const assert = require('node:assert/strict');
     await page.locator('#replacements').fill('#225588, #AA7733');
     await page.locator('#strength').fill('0');
     await page.waitForFunction(() => document.querySelectorAll('.color-card').length === 3 && [...document.querySelector('.mosaic').children].every(e => ['#225588','#AA7733'].includes(e.title)));
-    assert.ok(await page.locator('#final-preview').isVisible());
-    assert.equal(await page.locator('#final-after span').count(), 256);
     await page.locator('.target-choice[data-color="FFFFFF"]').click();
     assert.equal(await page.locator('#target').inputValue(), 'FFFFFF');
     assert.equal(await page.locator('.target-choice[data-color="FFFFFF"]').getAttribute('aria-pressed'), 'true');

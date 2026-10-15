@@ -9,7 +9,7 @@
 <style>
 .palette{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.color-card{min-width:0}.swatch{height:42px;border:1px solid #ffffff30;border-radius:6px;margin:10px 0}.mosaic{display:grid;grid-template-columns:repeat(8,1fr);border:1px solid #ffffff30;border-radius:6px;overflow:hidden;margin:10px 0}.mosaic span{aspect-ratio:1}.color-card p{font-size:12px;margin:4px 0}.color-card code{font-size:13px}#preview h2{font-size:20px;margin:0}#preview-note{font-size:13px}@media(max-width:450px){.palette{gap:8px}form{padding:18px}}
 select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inherit;border:1px solid #516875;border-radius:8px;min-width:0;width:100%;box-sizing:border-box}#replacement{display:grid;gap:18px}.add-color{display:flex;align-items:center;gap:12px}.add-color input{height:42px;width:60px}.add-color button{font-size:14px;padding:10px}
-.target-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-size:12px;text-align:left}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}#final-after{grid-template-columns:repeat(16,1fr);max-width:320px}#final-preview h2{font-size:20px}#final-preview p{font-size:13px}
+.target-colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;max-height:240px;overflow:auto}.target-choice{display:flex;align-items:center;gap:8px;background:#10191e;color:#e9f1f2;border:2px solid #354a55;padding:10px;font-size:12px;text-align:left}.target-choice[aria-pressed=true]{border-color:#6fe0bc}.target-chip{width:28px;height:28px;flex-shrink:0;border:1px solid #ffffff50;border-radius:4px}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -31,12 +31,6 @@ select,input[type=text]{font:inherit;padding:12px;background:#10191e;color:inher
 <p id="preview-note">Ranked by paint-color occurrences, including face colors. Tiles sample actual output shades; they don’t show block positions or in-game lighting.</p>
 <p id="preview-status" role="status" aria-live="polite"></p>
 <div id="palette" class="palette"></div>
-<section id="final-preview" hidden aria-label="Final replacement preview">
-<h2>Final paint preview</h2>
-<p>Sample output shades, including colors left unchanged. Tile layout is illustrative, not the vehicle’s shape. Rare colors may not appear.</p>
-<div id="final-after" class="mosaic" role="img" aria-label="Final paint sample"></div>
-<p id="final-summary"></p>
-</section>
 </section>
 <button id="submit">Add paint variation</button>
 <a id="download" class="download" hidden>Download painted XML</a>
@@ -76,7 +70,6 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   let objects = 0, paint_fields = 0, changed_fields = 0;
   let matched_fields = 0;
   const counts = new Map();
-  const paintSamples = [];
   const xml = source.replace(tags, tag => {
     if (!/^<o(?:\s|\/?>)/.test(tag)) return tag;
     const matches = [...tag.matchAll(paint)];
@@ -103,7 +96,6 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
         if (!counts.has(original)) counts.set(original, {color: original, count: 0, shades: new Map()});
         const entry = counts.get(original); entry.count++;
         entry.shades.set(result, (entry.shades.get(result) || 0) + 1);
-        paintSamples.push([original, result]);
       }
       return prefix + quote + parts.join(',') + quote;
     });
@@ -121,8 +113,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     });
     return {color: entry.color, count: entry.count, samples};
   });
-  const final_preview = Array.from({length:256}, () => paintSamples[Math.floor(random() * paintSamples.length)]);
-  return {xml, objects, paint_fields, changed_fields, matched_fields, preview, final_preview, colors: ranked.map(({color, count}) => ({color, count}))};
+  return {xml, objects, paint_fields, changed_fields, matched_fields, preview, colors: ranked.map(({color, count}) => ({color, count}))};
 }
 
 </script>
@@ -134,18 +125,13 @@ let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
 let paletteFile;
 function conversionOptions(){return {mode:mode.value,target:target.value,replacements:replacements.value.split(',')};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#final-preview').hidden=mode.value!=='replace'||!document.querySelector('#final-after').children.length;document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Your top paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Add paint variation';for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Your top paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Add paint variation';for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderTargetColors(colors){
 const list=document.querySelector('#target-colors');list.replaceChildren();
 for(const item of colors){const choice=document.createElement('button');choice.type='button';choice.className='target-choice';choice.dataset.color=item.color;choice.setAttribute('aria-pressed',String(item.color===target.value));
 const chip=document.createElement('span');chip.className='target-chip';chip.style.backgroundColor='#'+item.color;chip.setAttribute('aria-hidden','true');
 const label=document.createElement('span');label.textContent='#'+item.color+' · '+item.count.toLocaleString();choice.append(chip,label);
 choice.addEventListener('click',()=>{target.value=item.color;target.dispatchEvent(new Event('input',{bubbles:true}));});list.append(choice);}
-}
-function renderFinalPreview(data){
-for(const [id,index] of [['final-after',1]]){const fragment=document.createDocumentFragment();for(const sample of data.final_preview){const tile=document.createElement('span');tile.style.backgroundColor='#'+sample[index];tile.title='#'+sample[index];fragment.append(tile);}document.querySelector('#'+id).replaceChildren(fragment);}
-document.querySelector('#final-summary').textContent=data.changed_fields.toLocaleString()+' changed paint fields / '+data.matched_fields.toLocaleString()+' matching fields / '+data.paint_fields.toLocaleString()+' total fields.';
-document.querySelector('#final-preview').hidden=mode.value!=='replace';
 }
 document.querySelector('#add-color').addEventListener('click',()=>{const value=document.querySelector('#color-picker').value.toUpperCase();replacements.value=replacements.value.trim() ? replacements.value.replace(/,\s*$/, '')+', '+value : value;replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 async function readFile(selected){if(cachedFile!==selected){cachedFile=selected;cachedText=selected.text();}return cachedText;}
@@ -176,8 +162,8 @@ renderTargetColors(original.colors);
 paletteFile=selected;
 }
 const data=stippleVehicle(source,settings.strength,settings.seed,conversionOptions());if(version!==previewVersion)return;
-renderPreview(data.preview);renderFinalPreview(data);syncMode();previewStatus.textContent='';
-}catch(error){if(version===previewVersion){palette.replaceChildren();document.querySelector('#final-preview').hidden=true;previewStatus.textContent=error.message;}}
+renderPreview(data.preview);syncMode();previewStatus.textContent='';
+}catch(error){if(version===previewVersion){palette.replaceChildren();previewStatus.textContent=error.message;}}
 }
 form.addEventListener('input',()=>{
 syncMode();
