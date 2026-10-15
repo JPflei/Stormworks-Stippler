@@ -37,7 +37,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <details id="advanced-options">
 <summary>Advanced options</summary>
 <p id="advanced-palette"></p>
-<p>Colors grow in palette order over a random canvas. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables that color. Blob size is a target connected-tile count, not a diameter.</p>
+<p>Colors grow in palette order over a random canvas. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables that color. Blob size targets the average number of tiles grown per blob, not a diameter. Small regions and later overpainting can reduce visible sizes.</p>
 <label>Growth strictness: <output id="growth-strictness-value">0.00</output><input id="growth-strictness" type="range" min="0" max="1" step="0.01" value="0"></label>
 <p>0 picks randomly from the connected frontier. Higher values favor tiles closer to the seed; 1 always chooses the nearest available tile. Distance follows orthogonal tile links.</p>
 <label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
@@ -63,6 +63,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <div class="slice-controls"><label>Slice axis<select id="tile-axis"><option value="2">Z</option><option value="1">Y</option><option value="0">X</option></select></label><label>Slice position<select id="tile-slice"></select></label></div>
 <canvas id="tile-canvas" width="600" height="360" role="img" aria-label="Actual painted tile slice"></canvas>
 <p id="tile-map-summary" role="status"></p>
+<p id="blob-size-summary"></p>
 </section>
 </section>
 <button id="submit">Add paint variation</button>
@@ -90,16 +91,11 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
   }
   // Palette order is intentional: later colors can overpaint growth, but not seed anchors.
   for(const color of enabled){
-    const parent=Int32Array.from(nodes,(_,i)=>i),count=new Int32Array(n).fill(1);
-    const claimed=new Uint8Array(n),frontiers=Array.from(nodes,()=>new Set());
-    function root(i){while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;}
-    function union(a,b){a=root(a);b=root(b);if(a===b)return a;if(count[a]<count[b])[a,b]=[b,a];parent[b]=a;count[a]+=count[b];claimed[a]|=claimed[b];for(const tile of frontiers[b])frontiers[a].add(tile);frontiers[b].clear();return a;}
-    for(let i=0;i<n;i++)if(canvas[i]===color)for(const next of neighbors[i])if(next<i&&canvas[next]===color)union(i,next);
-    for(let i=0;i<n;i++)if(canvas[i]===color)for(const next of neighbors[i])if(canvas[next]!==color&&reserved[next]===-1)frontiers[root(i)].add(next);
+    const owners=new Int32Array(n).fill(-1);let completedTiles=0,completedBlobs=0;
     const distance=distances[color],versions=new Uint32Array(n),ties=Float64Array.from(nodes,()=>random());
     const desired=spacings[color],lower=Math.max(1,desired-2),upper=desired+2,heap=new Heap();
     function score(tile){
-      if(reserved[tile]!==-1 || (canvas[tile]===color && claimed[root(tile)]))return Infinity;
+      if(reserved[tile]!==-1 || owners[tile]!==-1)return Infinity;
       const d=distance[tile];if(d!==infinity&&(d<lower||d>upper))return Infinity;
       let result=d===infinity?0:Math.abs(d-desired);
       for(const other of enabled)if(other!==color&&distances[other][tile]!==infinity)result+=repulsion/(1+distances[other][tile]);
@@ -111,28 +107,25 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
       const queue=[seed];distance[seed]=0;rescore(seed);
       for(let head=0;head<queue.length;head++)for(const next of neighbors[queue[head]])if(distance[next]>distance[queue[head]]+1){distance[next]=distance[queue[head]]+1;queue.push(next);rescore(next);}
     }
-    function paint(tile){
-      canvas[tile]=color;
-      for(const next of neighbors[tile])if(canvas[next]===color)union(tile,next);
-      const component=root(tile);claimed[component]=1;
-      for(const next of neighbors[tile])if(canvas[next]!==color&&reserved[next]===-1)frontiers[component].add(next);
-      return component;
-    }
     let choice;
     while((choice=heap.pop())){
       if(choice.version!==versions[choice.tile]||!Number.isFinite(score(choice.tile)))continue;
       const tile=choice.tile,sameDistance=distance[tile],record={tile,color,score:choice.score,sameDistance:sameDistance===infinity?null:sameDistance};
-      reserved[tile]=color;paint(tile);seeds.push(record);updateDistances(tile);
+      const blobId=blobs.length,frontier=new Set();
+      function paintOwned(next){canvas[next]=color;owners[next]=blobId;for(const neighbor of neighbors[next])if(owners[neighbor]===-1&&reserved[neighbor]===-1)frontier.add(neighbor);}
+      reserved[tile]=color;paintOwned(tile);seeds.push(record);updateDistances(tile);
+      const target=sizes[color],expectedSize=Math.max(1,Math.min(target*2,(completedBlobs+1)*target-completedTiles));
+      const spread=Math.min(Math.floor(target/4),expectedSize-1),minimumSize=expectedSize-spread,maximumSize=expectedSize+spread;
       let generated=1,reason='boundary',growthDistance=null;const growthEdges=[];
       while(true){
-        const component=root(tile),connected=count[component],target=sizes[color];
-        const stopChance=connected<target?0.02*Math.pow(connected/target,8):Math.min(0.99,0.9+0.09*(connected-target)/target);
+        // Uniform stopping sizes around the corrected mean: never stop too early.
+        const stopChance=generated<minimumSize?0:Math.min(1,1/(maximumSize-generated+1));
         if(random()<stopChance){reason='probability';break;}
-        const frontier=frontiers[component];let next=-1;
+        let next=-1;
         while(frontier.size){
           if(strictness===0){let offset=Math.floor(random()*frontier.size);for(const candidate of frontier){if(offset--===0){next=candidate;break;}}}
           else{
-            for(const candidate of frontier)if(canvas[candidate]===color||reserved[candidate]!==-1)frontier.delete(candidate);
+            for(const candidate of frontier)if(owners[candidate]!==-1||reserved[candidate]!==-1)frontier.delete(candidate);
             if(!frontier.size)break;
             if(!growthDistance){growthDistance=new Int32Array(n).fill(infinity);growthDistance[tile]=0;const queue=[tile];for(let head=0;head<queue.length;head++)for(const candidate of neighbors[queue[head]])if(growthDistance[candidate]===infinity){growthDistance[candidate]=growthDistance[queue[head]]+1;queue.push(candidate);}}
             let minimum=infinity;for(const candidate of frontier)minimum=Math.min(minimum,growthDistance[candidate]);
@@ -140,14 +133,15 @@ function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion =
             let choice=random()*weights.reduce((sum,value)=>sum+value,0);next=candidates[candidates.length-1];
             for(let i=0;i<candidates.length;i++){choice-=weights[i];if(choice<0){next=candidates[i];break;}}
           }
-          frontier.delete(next);if(canvas[next]!==color&&reserved[next]===-1)break;next=-1;
+          frontier.delete(next);if(owners[next]===-1&&reserved[next]===-1)break;next=-1;
         }
         if(next<0)break;
-        const from=neighbors[next].find(candidate=>canvas[candidate]===color&&root(candidate)===component);
+        const from=neighbors[next].find(candidate=>owners[candidate]===blobId);
         if(from===undefined)continue;
-        paint(next);growthEdges.push([from,next]);generated++;
+        paintOwned(next);growthEdges.push([from,next]);generated++;
       }
-      blobs.push({...record,generated,connectedSize:count[root(tile)],reason,growthEdges});
+      completedTiles+=generated;completedBlobs++;
+      blobs.push({...record,generated,connectedSize:generated,targetSize:target,expectedSize,minimumSize,maximumSize,reason,growthEdges});
     }
   }
   return {initialColors,colors:Array.from(canvas),seeds,blobs};
@@ -306,7 +300,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     });
     return {color: entry.color, count: entry.count, samples};
   });
-  const tileMap=graph?graph.layers.map(group=>({body:group.body,layer:group.layer,seeds:group.seeds.length,blobs:group.blobs.map(({color,generated,connectedSize,reason})=>({color,generated,connectedSize,reason})),tiles:group.nodes.map(node=>({xyz:node.xyz,color:node.resultColor,base:replacements[node.colorIndex],seed:node.seedColor>=0}))})):[];
+  const tileMap=graph?graph.layers.map(group=>({body:group.body,layer:group.layer,seeds:group.seeds.length,blobs:group.blobs.map(({color,generated,connectedSize,targetSize,expectedSize,reason})=>({color,generated,connectedSize,targetSize,expectedSize,reason})),tiles:group.nodes.map(node=>({xyz:node.xyz,color:node.resultColor,base:replacements[node.colorIndex],seed:node.seedColor>=0}))})):[];
   unpositioned_objects=graph?graph.missing:0;
   return {xml, objects, paint_fields, changed_fields, matched_fields, unpositioned_objects, tileMap, preview, colors: ranked.map(({color, count}) => ({color, count}))};
 }
@@ -399,7 +393,7 @@ savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].group
 }
 function updateFrequencySummary(){
 for(const share of document.querySelectorAll('.frequency-share'))share.textContent=savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'tiles';
-document.querySelector('#frequency-summary').textContent='Lowest-score valid seed wins. Larger spacing spreads seeds farther apart. Growth stops probabilistically as its connected region reaches the target size.';
+document.querySelector('#frequency-summary').textContent='Lowest-score valid seed wins. Larger spacing spreads seeds farther apart. Growth sizes vary around the requested mean; small regions can limit the result.';
 }
 
 function renderAdvanced(){
@@ -462,6 +456,8 @@ const left=(canvas.width-(maxU-minU+1)*size)/2,top=(canvas.height-(maxV-minV+1)*
 for(const tile of tiles){const x=left+(tile.xyz[u]-minU)*size,y=top+(maxV-tile.xyz[v])*size;ctx.fillStyle='#'+tile.color;ctx.fillRect(x,y,Math.max(1,size-(size>=6?1:0)),Math.max(1,size-(size>=6?1:0)));if(tile.seed&&size>=5){ctx.beginPath();ctx.arc(x+size/2,y+size/2,Math.max(1,size*0.12),0,Math.PI*2);ctx.fillStyle='#10191e';ctx.fill();ctx.strokeStyle='#ffffff';ctx.lineWidth=1;ctx.stroke();}}
 const missing=layer.tiles.filter(tile=>!tile.xyz).length;
 document.querySelector('#tile-map-summary').textContent=tiles.length+' tiles in this slice · '+layer.seeds+' seeds in this layer · axes '+['X','Y','Z'][u]+'/'+['X','Y','Z'][v]+(missing?' · '+missing+' isolated tiles have no position':'');
+const sizes=new Map();for(const blob of layer.blobs){if(!sizes.has(blob.color))sizes.set(blob.color,{total:0,count:0,target:blob.targetSize,limited:0});const value=sizes.get(blob.color);value.total+=blob.generated;value.count++;if(blob.reason==='boundary')value.limited++;}
+document.querySelector('#blob-size-summary').textContent='Grown sizes before later overpainting: '+[...sizes].map(([color,value])=>'color '+(color+1)+' '+(value.total/value.count).toFixed(1)+' / target '+value.target+(value.limited?' ('+value.limited+' boundary-limited)':'')).join('; ')+'.';
 }
 function updateSliceChoices(){
 const layer=currentPaintMap[Number(document.querySelector('#tile-layer').value)];if(!layer)return;

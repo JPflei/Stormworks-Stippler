@@ -93,25 +93,21 @@ const http = require('node:http');
         minimal&&=Math.abs(chosenScore-minimum)<1e-9&&Math.abs(chosenScore-blob.score)<1e-9;
         const own=anchors.filter(a=>a.color===current).map(a=>distance(a.tile,blob.tile));
         valid&&=!own.length||(Math.min(...own)>=4&&Math.min(...own)<=8);
-        replay[blob.tile]=current;anchors.push(blob);for(const tile of component(blob.tile,current))claimed.add(tile);
-        for(const [from,to] of blob.growthEdges){connected&&=neighbors[from].includes(to)&&component(blob.tile,current).has(from)&&!anchors.some(a=>a.tile===to);replay[to]=current;for(const tile of component(blob.tile,current))claimed.add(tile);}
-        counts&&=component(blob.tile,current).size===blob.connectedSize;
+        replay[blob.tile]=current;anchors.push(blob);claimed.add(blob.tile);const owned=new Set([blob.tile]);
+        for(const [from,to] of blob.growthEdges){connected&&=neighbors[from].includes(to)&&owned.has(from)&&!claimed.has(to)&&!anchors.some(a=>a.tile===to);replay[to]=current;owned.add(to);claimed.add(to);}
+        counts&&=owned.size===blob.connectedSize&&owned.size===blob.generated;
         if(blobIndex===result.blobs.length-1||result.blobs[blobIndex+1].color!==current)exhausted&&=nodes.every((_,tile)=>!Number.isFinite(score(tile)));
       }
       const small=growSeededCanvas(nodes,neighbors,spacings,[2,2,2],rng(),repulsion);
       const strict=growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,1);
       const weighted=growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,0.65);
       function frontierExcess(run){
-        const paint=run.initialColors.slice(),reserved=new Set();let excess=0,steps=0;
-        for(const blob of run.blobs){paint[blob.tile]=blob.color;reserved.add(blob.tile);
+        const reserved=new Set(),passOwned=new Set();let excess=0,steps=0,color=-1;
+        for(const blob of run.blobs){if(color!==blob.color){color=blob.color;passOwned.clear();}reserved.add(blob.tile);passOwned.add(blob.tile);const owned=new Set([blob.tile]);
           for(const [from,to] of blob.growthEdges){
-            const seen=new Set([blob.tile]),queue=[blob.tile],frontier=new Set();
-            for(let head=0;head<queue.length;head++)for(const next of neighbors[queue[head]]){
-              if(paint[next]===blob.color&&!seen.has(next)){seen.add(next);queue.push(next);}
-              else if(paint[next]!==blob.color&&!reserved.has(next))frontier.add(next);
-            }
+            const frontier=new Set();for(const tile of owned)for(const next of neighbors[tile])if(!passOwned.has(next)&&!reserved.has(next))frontier.add(next);
             const closest=Math.min(...[...frontier].map(tile=>distance(blob.tile,tile)));
-            excess+=distance(blob.tile,to)-closest;steps++;paint[to]=blob.color;
+            excess+=distance(blob.tile,to)-closest;steps++;owned.add(to);passOwned.add(to);
           }
         }
         return {excess,mean:excess/steps,steps};
@@ -120,6 +116,10 @@ const http = require('node:http');
       let strictnessRejected=false;try{growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,1.01);}catch{strictnessRejected=true;}
       const mean=blobs=>blobs.reduce((sum,b)=>sum+b.generated,0)/blobs.length;
       const overgrown=growSeededCanvas(nodes,neighbors,[6],[2],()=>0.5,2);
+      const averageNodes=Array.from({length:1600},(_,i)=>({xyz:[i%40,Math.floor(i/40),0]}));
+      const averageNeighbors=averageNodes.map((_,i)=>[i%40?i-1:-1,i%40<39?i+1:-1,i>=40?i-40:-1,i<1560?i+40:-1].filter(i=>i>=0));
+      const calibrated=growSeededCanvas(averageNodes,averageNeighbors,[12],[24],rng(),2,1);
+      const actualMean=mean(calibrated.blobs);
       let zeroRejected=false;try{growSeededCanvas(nodes,neighbors,[0],[12],rng());}catch{zeroRejected=true;}
       return {validSpacing:valid,minimumScore:minimal,orthogonalGrowth:connected,connectedCounts:counts,
         replayMatches:JSON.stringify(replay)===JSON.stringify(result.colors),
@@ -127,7 +127,9 @@ const http = require('node:http');
         uniqueSeeds:new Set(result.seeds.map(seed=>seed.tile)).size===result.seeds.length,
         paletteOrder:result.seeds.every((seed,i)=>i===0||result.seeds[i-1].color<=seed.color),
         sizeControlsGrowth:mean(result.blobs)>mean(small.blobs)*1.5,
-        oversizedStops:overgrown.blobs.length===1&&overgrown.blobs[0].generated===1&&overgrown.blobs[0].connectedSize===400,
+        canvasNotCounted:overgrown.blobs[0].generated===2 && overgrown.blobs.every(blob=>blob.generated<=blob.maximumSize),
+        averageTargetsSize:actualMean>23&&actualMean<25,
+        noPrematureFinishes:calibrated.blobs.every(blob=>blob.reason==='boundary'||blob.generated>=blob.minimumSize),
         finite:result.seeds.length<=nodes.length,exhausted,
         repeatable:JSON.stringify(result)===JSON.stringify(growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion)),
         zeroStrictnessUnchanged:JSON.stringify(result)===JSON.stringify(growSeededCanvas(nodes,neighbors,spacings,sizes,rng(),repulsion,0)),
