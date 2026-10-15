@@ -16,6 +16,7 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 .editor-panel,.preview-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;align-content:start;min-width:0}.preview-panel{border-top:1px solid #354a55;padding-top:24px}.palette{grid-template-columns:repeat(auto-fit,minmax(min(120px,100%),1fr))}
 @media(min-width:1000px){body{max-width:1440px;margin:32px auto}form{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:32px;align-items:start}.preview-panel{border-top:0;padding-top:0;border-left:1px solid #354a55;padding-left:32px}body>p{max-width:780px}}
 .replacement-mosaic{grid-template-columns:repeat(30,minmax(0,1fr));grid-template-rows:repeat(30,minmax(0,1fr));aspect-ratio:1}.replacement-mosaic span{aspect-ratio:auto;min-width:0;min-height:0}
+#tile-map-preview{display:grid;gap:12px;min-width:0}#tile-map-preview p{font-size:13px}#tile-canvas{width:100%;height:auto;display:block;border:1px solid #354a55;border-radius:8px;box-sizing:border-box}.slice-controls{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 </style>
 <small>STORMWORKS / PAINT TOOLS</small>
 <h1>A little texture.<br>A lot of character.</h1>
@@ -36,13 +37,13 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <details id="advanced-options">
 <summary>Advanced options</summary>
 <p id="advanced-palette"></p>
-<p>Blob size controls patch size. Frequency controls how densely blobs appear: higher means closer together. The background fills the gaps.</p>
-<label>Background color<select id="blob-background"></select></label>
-<label>Outliers: <output id="outliers-value">1%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="1"></label>
+<p>Colors grow in palette order over a random canvas. Seed spacing is the desired distance to the nearest same-color seed (±2 tiles); 0 disables that color. Blob size is a target connected-tile count, not a diameter.</p>
+<label>Other-color seed repulsion<input id="seed-repulsion" type="number" min="0" max="10" step="0.5" value="2"></label>
+<label>Outliers: <output id="outliers-value">0%</output><input id="blob-outliers" type="range" min="0" max="10" step="1" value="0"></label>
 <div id="frequency-controls"></div>
 <p id="frequency-summary" role="status"></p>
 </details>
-<p>Exact color matches only. Matching paint slots use the selected palette’s scattered, irregular blobs. Shade variance applies per slot. All other colors stay unchanged.</p>
+<p>Exact color matches only. Matching paint slots use the selected palette’s seed spacing and connected growth settings. Shade variance applies per slot. All other colors stay unchanged.</p>
 </section>
 </div>
 <div class="preview-panel" role="region" aria-label="Preview and export">
@@ -53,6 +54,14 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 <p id="preview-note">Ranked by paint-color occurrences, including face colors. Tiles sample actual output shades; they don’t show block positions or in-game lighting.</p>
 <p id="preview-status" role="status" aria-live="polite"></p>
 <div id="palette" class="palette"></div>
+<section id="tile-map-preview" hidden aria-label="Paint tile map preview">
+<h2>Paint tile map</h2>
+<p>Target-color tiles in body-local coordinates, separated by paint-slot layer. These are exact slices of the painted map, not an unfolded vehicle net. Dots mark seed tiles.</p>
+<label>Body / paint-slot layer<select id="tile-layer"></select></label>
+<div class="slice-controls"><label>Slice axis<select id="tile-axis"><option value="2">Z</option><option value="1">Y</option><option value="0">X</option></select></label><label>Slice position<select id="tile-slice"></select></label></div>
+<canvas id="tile-canvas" width="600" height="360" role="img" aria-label="Actual painted tile slice"></canvas>
+<p id="tile-map-summary" role="status"></p>
+</section>
 </section>
 <button id="submit">Add paint variation</button>
 <a id="download" class="download" hidden>Download painted XML</a>
@@ -61,52 +70,110 @@ summary{cursor:pointer;font-weight:700}#advanced-options{border:1px solid #354a5
 </form>
 <footer>Changes base, accent, and face paint colors. Keeps your original file intact. Test the downloaded creation in Stormworks before replacing your saved vehicle.</footer>
 <script>
-/* Sparse centers stay fixed as size changes. Frequency activates more centers. */
-function createBlobSampler(frequencies, sizes, background, hash, roughness = 0.65) {
-  const span = 6, cache = new Map();
-  function noise(x, y, z, key) {
-    const low = [x,y,z].map(Math.floor);
-    const t = [x,y,z].map((v,i)=>{const f=v-low[i];return f*f*(3-2*f);});
-    let result = 0;
-    for(let dx=0;dx<2;dx++)for(let dy=0;dy<2;dy++)for(let dz=0;dz<2;dz++){
-      result += hash(key+'|'+[low[0]+dx,low[1]+dy,low[2]+dz].join(',')) *
-        (dx?t[0]:1-t[0])*(dy?t[1]:1-t[1])*(dz?t[2]:1-t[2]);
-    }
-    return result * 2 - 1;
+/* Finite graph growth. Edges describe orthogonal paint-tile adjacency. */
+function growSeededCanvas(nodes, neighbors, spacings, sizes, random, repulsion = 2) {
+  const n=nodes.length, infinity=2147483647;
+  const enabled=spacings.map((value,color)=>value>0?color:-1).filter(color=>color>=0);
+  if(!enabled.length)throw new Error('Enable at least one palette color with a seed spacing above 0.');
+  const canvas=Int32Array.from(nodes,()=>enabled[Math.floor(random()*enabled.length)]);
+  const initialColors=Array.from(canvas);
+  const reserved=new Int32Array(n).fill(-1),seeds=[],blobs=[];
+  const distances=spacings.map(()=>new Int32Array(n).fill(infinity));
+  class Heap {
+    constructor(){this.items=[];}
+    less(a,b){return a.score<b.score || (a.score===b.score && (a.tie<b.tie || (a.tie===b.tie && a.tile<b.tile)));}
+    push(value){const a=this.items;let i=a.length;a.push(value);while(i){const p=(i-1)>>1;if(!this.less(a[i],a[p]))break;[a[i],a[p]]=[a[p],a[i]];i=p;}}
+    pop(){const a=this.items;if(!a.length)return null;const first=a[0],last=a.pop();if(a.length){a[0]=last;let i=0;while(true){let j=i,l=i*2+1,r=l+1;if(l<a.length&&this.less(a[l],a[j]))j=l;if(r<a.length&&this.less(a[r],a[j]))j=r;if(j===i)break;[a[i],a[j]]=[a[j],a[i]];i=j;}}return first;}
   }
-  return function sample(xyz, bodyKey) {
-    let winner = background, bestDepth = -Infinity;
-    for(let color=0;color<frequencies.length;color++){
-      if(color===background || frequencies[color]===0)continue;
-      const size=sizes[color],bound=size*0.9;
-      const low=xyz.map(v=>Math.floor((v-bound)/span)),high=xyz.map(v=>Math.floor((v+bound)/span));
-      let distortion;
-      for(let x=low[0];x<=high[0];x++)for(let y=low[1];y<=high[1];y++)for(let z=low[2];z<=high[2];z++){
-        const key=bodyKey+'|blob:'+color+'|'+[x,y,z].join(',');
-        if(!cache.has(key)){
-          if(cache.size>50000)cache.clear();
-          const center=hash(key+'|active')<frequencies[color]/100 ? {
-            position:[x,y,z].map((v,i)=>(v+hash(key+'|position:'+i))*span),
-            axes:[0,1,2].map(i=>0.8+hash(key+'|axis:'+i)*0.4),
-            scale:0.75+hash(key+'|radius')*0.3,
-          }:null;
-          cache.set(key,center);
-        }
-        const center=cache.get(key);if(!center)continue;
-        const distance=Math.hypot(...xyz.map((v,i)=>(v-center.position[i])/center.axes[i]));
-        if(distance>size*0.7)continue;
-        if(distortion===undefined){
-          const scale=Math.max(1,size*0.28),key=bodyKey+'|edge:'+color;
-          distortion=roughness*(0.7*noise(...xyz.map(v=>v/scale),key)+0.3*noise(...xyz.map(v=>v/(scale*0.45)),key+'|fine'));
-        }
-        const radius=size*0.5*center.scale*(1+0.35*distortion);
-        const depth=(radius-distance)/radius;
-        if(depth>=0 && depth>bestDepth){winner=color;bestDepth=depth;}
+  // Palette order is intentional: later colors can overpaint growth, but not seed anchors.
+  for(const color of enabled){
+    const parent=Int32Array.from(nodes,(_,i)=>i),count=new Int32Array(n).fill(1);
+    const claimed=new Uint8Array(n),frontiers=Array.from(nodes,()=>new Set());
+    function root(i){while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;}
+    function union(a,b){a=root(a);b=root(b);if(a===b)return a;if(count[a]<count[b])[a,b]=[b,a];parent[b]=a;count[a]+=count[b];claimed[a]|=claimed[b];for(const tile of frontiers[b])frontiers[a].add(tile);frontiers[b].clear();return a;}
+    for(let i=0;i<n;i++)if(canvas[i]===color)for(const next of neighbors[i])if(next<i&&canvas[next]===color)union(i,next);
+    for(let i=0;i<n;i++)if(canvas[i]===color)for(const next of neighbors[i])if(canvas[next]!==color&&reserved[next]===-1)frontiers[root(i)].add(next);
+    const distance=distances[color],versions=new Uint32Array(n),ties=Float64Array.from(nodes,()=>random());
+    const desired=spacings[color],lower=Math.max(1,desired-2),upper=desired+2,heap=new Heap();
+    function score(tile){
+      if(reserved[tile]!==-1 || (canvas[tile]===color && claimed[root(tile)]))return Infinity;
+      const d=distance[tile];if(d!==infinity&&(d<lower||d>upper))return Infinity;
+      let result=d===infinity?0:Math.abs(d-desired);
+      for(const other of enabled)if(other!==color&&distances[other][tile]!==infinity)result+=repulsion/(1+distances[other][tile]);
+      return result;
+    }
+    function rescore(tile){const version=++versions[tile],value=score(tile);if(Number.isFinite(value))heap.push({tile,score:value,tie:ties[tile],version});}
+    for(let i=0;i<n;i++)rescore(i);
+    function updateDistances(seed){
+      const queue=[seed];distance[seed]=0;rescore(seed);
+      for(let head=0;head<queue.length;head++)for(const next of neighbors[queue[head]])if(distance[next]>distance[queue[head]]+1){distance[next]=distance[queue[head]]+1;queue.push(next);rescore(next);}
+    }
+    function paint(tile){
+      canvas[tile]=color;
+      for(const next of neighbors[tile])if(canvas[next]===color)union(tile,next);
+      const component=root(tile);claimed[component]=1;
+      for(const next of neighbors[tile])if(canvas[next]!==color&&reserved[next]===-1)frontiers[component].add(next);
+      return component;
+    }
+    let choice;
+    while((choice=heap.pop())){
+      if(choice.version!==versions[choice.tile]||!Number.isFinite(score(choice.tile)))continue;
+      const tile=choice.tile,sameDistance=distance[tile],record={tile,color,score:choice.score,sameDistance:sameDistance===infinity?null:sameDistance};
+      reserved[tile]=color;paint(tile);seeds.push(record);updateDistances(tile);
+      let generated=1,reason='boundary';const growthEdges=[];
+      while(true){
+        const component=root(tile),connected=count[component],target=sizes[color];
+        const stopChance=connected<target?0.02*Math.pow(connected/target,8):Math.min(0.99,0.9+0.09*(connected-target)/target);
+        if(random()<stopChance){reason='probability';break;}
+        const frontier=frontiers[component];let next=-1;
+        while(frontier.size){let offset=Math.floor(random()*frontier.size);for(const candidate of frontier){if(offset--===0){next=candidate;break;}}frontier.delete(next);if(canvas[next]!==color&&reserved[next]===-1)break;next=-1;}
+        if(next<0)break;
+        const from=neighbors[next].find(candidate=>canvas[candidate]===color&&root(candidate)===component);
+        if(from===undefined)continue;
+        paint(next);growthEdges.push([from,next]);generated++;
+      }
+      blobs.push({...record,generated,connectedSize:count[root(tile)],reason,growthEdges});
+    }
+  }
+  return {initialColors,colors:Array.from(canvas),seeds,blobs};
+}
+
+function buildPaintTileMap(document,target,parseColors) {
+  const groups=new Map(),references=new Map(),bodies=new Map([...document.getElementsByTagName('body')].map((body,i)=>[body,i]));
+  let missing=0;
+  for(const [objectIndex,object] of [...document.getElementsByTagName('o')].entries()){
+    let body=object.parentElement;while(body&&body.tagName!=='body')body=body.parentElement;
+    const bodyKey=body?(body.getAttribute('unique_id')||'body')+':'+bodies.get(body):'root';
+    const vp=[...object.children].find(child=>child.tagName==='vp');
+    const xyz=vp?['x','y','z'].map(axis=>Number(vp.getAttribute(axis)||0)):null;
+    const positioned=xyz&&xyz.every(value=>Number.isSafeInteger(value)&&Math.abs(value)<Number.MAX_SAFE_INTEGER-2);
+    let usedMissing=false;
+    for(const name of ['bc','ac','bc2','bc3','sc']){
+      if(!object.hasAttribute(name))continue;
+      const value=object.getAttribute(name);let parsed=parseColors(name,value);
+      if(!parsed&&name==='sc'&&/^\d+$/.test(value)&&Number(value)>=2&&Number(value)<=64){const base=object.getAttribute('bc');if(base&&parseColors('bc',base))parsed={parts:[value,...Array(Number(value)).fill(base)],start:1};}
+      if(!parsed)continue;
+      for(let slot=parsed.start;slot<parsed.parts.length;slot++){
+        if(parsed.parts[slot].toUpperCase().padStart(6,'0')!==target)continue;
+        const layer=name+':'+slot,key=bodyKey+'|'+layer;
+        if(!groups.has(key))groups.set(key,{key,body:bodyKey,layer,tiles:new Map()});
+        const group=groups.get(key),positionKey=positioned?xyz.join(','):'unpositioned:'+objectIndex;
+        if(!group.tiles.has(positionKey))group.tiles.set(positionKey,{key:positionKey,id:key+'|'+positionKey,xyz:positioned?xyz:null,members:[]});
+        const node=group.tiles.get(positionKey);node.members.push(objectIndex+'|'+layer);references.set(objectIndex+'|'+layer,node);
+        if(!positioned)usedMissing=true;
       }
     }
-    return winner;
-  };
+    if(usedMissing)missing++;
+  }
+  const layers=[...groups.values()].sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);
+  for(const group of layers){
+    group.nodes=[...group.tiles.values()].sort((a,b)=>{if(a.xyz&&b.xyz)return a.xyz[2]-b.xyz[2]||a.xyz[1]-b.xyz[1]||a.xyz[0]-b.xyz[0];return a.key<b.key?-1:a.key>b.key?1:0;});
+    const ids=new Map(group.nodes.map((node,index)=>[node.key,index]));
+    group.neighbors=group.nodes.map(node=>{const result=[];if(node.xyz)for(let axis=0;axis<3;axis++)for(const step of [-1,1]){const next=node.xyz.slice();next[axis]+=step;const id=ids.get(next.join(','));if(id!==undefined)result.push(id);}return result;});
+  }
+  return {layers,references,missing};
 }
+
 /* Browser-local XML conversion. Preserve original text outside paint values. */
 function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   if (!Number.isInteger(strength) || strength < 0 || strength > 50) throw new Error('Strength must be a whole number between 0 and 50.');
@@ -129,21 +196,13 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
   const replacements = (options.replacements || []).map(c => String(c).trim().replace(/^#/, '').toUpperCase());
   if (replacing && !hex.test(target)) throw new Error('Choose a color from your creation to replace.');
   if (replacing && (!replacements.length || replacements.some(c => !hex.test(c)))) throw new Error('Add at least one valid replacement color to the selected palette.');
-  const weights = options.frequencies ?? options.weights ?? replacements.map(()=>45);
-  const groupingSizes = options.groupingSizes === undefined ? replacements.map(() => options.groupingSize ?? 8) : options.groupingSizes;
-  if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100))) throw new Error('Color frequencies must be whole numbers from 0 to 100.');
-  if (replacing && (!Array.isArray(groupingSizes) || groupingSizes.length !== replacements.length || groupingSizes.some(g=>!Number.isInteger(g)||g<1||g>32))) throw new Error('Grouping size must be a whole number from 1 to 32.');
-  const background = options.background ?? 0;
-  const outliers = options.outliers ?? 0;
-  if(replacing && (!Number.isInteger(background)||background<0||background>=replacements.length))throw new Error('Choose a valid palette background color.');
-  if(replacing && (!Number.isFinite(outliers)||outliers<0||outliers>10))throw new Error('Outliers must be between 0 and 10 percent.');
-  const totalWeight = replacing ? weights.reduce((sum, w) => sum + w, 0) : 0;
-  function weightedColor(value) {
-    if(!totalWeight)return replacements[background];
-    let remaining = value * totalWeight;
-    for (let i = 0; i < replacements.length; i++) {remaining -= weights[i]; if (remaining < 0) return replacements[i];}
-    return replacements[weights.findLastIndex(w => w > 0)];
-  }
+  const weights = options.seedSpacings ?? options.frequencies ?? options.weights ?? replacements.map(()=>8);
+  const groupingSizes = options.groupingSizes === undefined ? replacements.map(() => options.groupingSize ?? 24) : options.groupingSizes;
+  if (replacing && (!Array.isArray(weights) || weights.length !== replacements.length || weights.some(w => !Number.isInteger(w) || w < 0 || w > 100) || !weights.some(w=>w>0))) throw new Error('Enable at least one color. Seed spacing must be a whole number from 0 to 100 (0 disables a color).');
+  if (replacing && (!Array.isArray(groupingSizes) || groupingSizes.length !== replacements.length || groupingSizes.some(g=>!Number.isInteger(g)||g<1||g>512))) throw new Error('Blob size must be a whole number from 1 to 512 connected tiles.');
+  const outliers=options.outliers??0,repulsion=options.seedRepulsion??2;
+  if(replacing&&(!Number.isFinite(outliers)||outliers<0||outliers>10))throw new Error('Outliers must be between 0 and 10 percent.');
+  if(replacing&&(!Number.isFinite(repulsion)||repulsion<0||repulsion>10))throw new Error('Seed repulsion must be between 0 and 10.');
   // Coordinate hashing makes patches repeatable regardless of XML component order.
   function spatialRandom(key) {
     let hash = 2166136261;
@@ -152,10 +211,7 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     hash = Math.imul(hash, 0x846ca68b); hash ^= hash >>> 16;
     return (hash >>> 0) / 4294967296;
   }
-  const sampleBlob = replacing ? createBlobSampler(weights,groupingSizes,background,spatialRandom) : null;
-  const objectElements = replacing ? [...document.getElementsByTagName('o')] : [];
-  const bodies = new Map([...document.getElementsByTagName('body')].map((body, index) => [body, index]));
-  let objectIndex = 0;
+  let objectIndex=0,graph=null;
   const paint = /([\s](sc|bc|ac|bc2|bc3)\s*=\s*)(["'])([^"']*)\3/g;
   const tags = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(?:[^>"']|"[^"]*"|'[^']*')*>/g;
   function colors(name, value) {
@@ -164,41 +220,35 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     if (name === 'sc' && /^\d+$/.test(parts[0]) && parts.length > 1 && parts.slice(1).every(p => /^[0-9a-f]{1,6}$/i.test(p))) return {parts, start: 1};
     return null;
   }
+  if(replacing){
+    graph=buildPaintTileMap(document,target,colors);
+    for(const group of graph.layers){
+      const generated=growSeededCanvas(group.nodes,group.neighbors,weights,groupingSizes,random,repulsion);
+      group.seeds=generated.seeds;group.blobs=generated.blobs;
+      group.nodes.forEach((node,index)=>{node.colorIndex=generated.colors[index];node.seedColor=-1;});
+      for(const anchor of group.seeds)group.nodes[anchor.tile].seedColor=anchor.color;
+    }
+  }
   let objects = 0, paint_fields = 0, changed_fields = 0;
   let matched_fields = 0, unpositioned_objects = 0;
   const counts = new Map();
   const xml = source.replace(tags, tag => {
     if (!/^<o(?:\s|\/?>)/.test(tag)) return tag;
-    const element = objectElements[objectIndex++];
-    const matches = [...tag.matchAll(paint)];
-    if (!matches.some(m => colors(m[2], m[4]))) return tag;
-    const hasTarget = replacing && matches.some(m=>{const parsed=colors(m[2],m[4]);return parsed && parsed.parts.slice(parsed.start).some(c=>c.toUpperCase().padStart(6,'0')===target);});
-    let blobIndex = null, spatialContext = null;
-    if (element && hasTarget) {
-      const position = [...element.children].find(child => child.tagName === 'vp');
-      let body = element.parentElement;
-      while (body && body.tagName !== 'body') body = body.parentElement;
-      if (position) {
-        const xyz = ['x','y','z'].map(axis => Number(position.getAttribute(axis) || 0));
-        if (xyz.every(value=>Number.isFinite(value)&&Math.abs(value)<=Number.MAX_SAFE_INTEGER-64)) {
-          const bodyKey = body ? body.getAttribute('unique_id') || bodies.get(body) : 'root';
-          spatialContext = {xyz, bodyKey};
-          blobIndex = sampleBlob(xyz,bodyKey);
-        }
-      }
-    }
-    function chooseReplacement(slotKey) {
-      if(blobIndex===null)return weightedColor(random());
-      let index=blobIndex;
-      const key=spatialContext.bodyKey+'|'+spatialContext.xyz.join(',')+'|'+slotKey;
-      if(outliers>0 && spatialRandom(key+'|outlier')<outliers/100){
-        const alternatives=replacements.map((_,i)=>i).filter(i=>i!==index && (i===background || weights[i]>0));
+    const currentObject=objectIndex++;
+    const matches=[...tag.matchAll(paint)];
+    if(!matches.some(m=>colors(m[2],m[4])))return tag;
+    function chooseReplacement(slotKey){
+      const node=graph.references.get(currentObject+'|'+slotKey);
+      if(!node)throw new Error('Paint-tile mapping failed. The original file has not been changed.');
+      let index=node.colorIndex;
+      const key=node.id;
+      if(outliers>0&&node.seedColor<0&&spatialRandom(key+'|outlier')<outliers/100){
+        const alternatives=weights.map((spacing,color)=>spacing>0&&color!==index?color:-1).filter(color=>color>=0);
         if(alternatives.length)index=alternatives[Math.floor(spatialRandom(key+'|choice')*alternatives.length)];
       }
       return replacements[index];
     }
     objects++;
-    let fallbackCounted=false;
     return tag.replace(paint, (all, prefix, name, quote, value) => {
       let parsed = colors(name, value);
       if (!parsed && name === 'sc' && /^\d+$/.test(value) && Number(value) >= 2 && Number(value) <= 64) {
@@ -211,11 +261,12 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
       for (let i = start; i < parts.length; i++) {
         const original = parts[i].toUpperCase().padStart(6, '0');
         const matchesTarget = original === target;
-        if (replacing && matchesTarget) {matched_fields++;if(blobIndex===null && !fallbackCounted){unpositioned_objects++;fallbackCounted=true;}}
+        if(replacing&&matchesTarget)matched_fields++;
         const eligible = replacing ? matchesTarget : selection.has(original);
         const base = replacing && eligible ? chooseReplacement(name+':'+i) : original;
         const offset = eligible ? Math.floor(random() * (strength * 2 + 1)) - strength : 0;
         const result = !eligible ? original : [0, 2, 4].map(n => Math.max(0, Math.min(255, parseInt(base.slice(n, n + 2), 16) + offset)).toString(16).padStart(2, '0')).join('').toUpperCase();
+        if(replacing&&matchesTarget){const node=graph.references.get(currentObject+'|'+name+':'+i);if(node.resultColor===undefined)node.resultColor=result;}
         paint_fields++;
         if (result !== original) { changed_fields++; parts[i] = result; attributeChanged = true; }
         if (!counts.has(original)) counts.set(original, {color: original, count: 0, shades: new Map()});
@@ -239,7 +290,9 @@ function stippleVehicle(source, strength = 12, seed = 0, options = {}) {
     });
     return {color: entry.color, count: entry.count, samples};
   });
-  return {xml, objects, paint_fields, changed_fields, matched_fields, unpositioned_objects, preview, colors: ranked.map(({color, count}) => ({color, count}))};
+  const tileMap=graph?graph.layers.map(group=>({body:group.body,layer:group.layer,seeds:group.seeds.length,blobs:group.blobs.map(({color,generated,connectedSize,reason})=>({color,generated,connectedSize,reason})),tiles:group.nodes.map(node=>({xyz:node.xyz,color:node.resultColor,base:replacements[node.colorIndex],seed:node.seedColor>=0}))})):[];
+  unpositioned_objects=graph?graph.missing:0;
+  return {xml, objects, paint_fields, changed_fields, matched_fields, unpositioned_objects, tileMap, preview, colors: ranked.map(({color, count}) => ({color, count}))};
 }
 
 </script>
@@ -250,22 +303,22 @@ const preview=document.querySelector('#preview'),palette=document.querySelector(
 let cachedFile, cachedText;
 const mode=document.querySelector('#mode'),target=document.querySelector('#target'),replacements=document.querySelector('#replacements');
 const paletteSelect=document.querySelector('#palette-select');
-const paletteStorageKey='stormworks-stippler.blob-palettes.v1';
+const paletteStorageKey='stormworks-stippler.seed-growth-palettes.v1';
 const paletteNames=['Desert camo','Woods camo','Arctic camo'];
 const defaultPalettes=['#C2B280, #A68A64, #7F6B4E', '#556B2F, #3D4B2C, #6B532F, #252B23', '#F0F2F2, #C9D1D3, #8B989E, #45535A'];
 let savedPalettes=defaultPalettes.slice(),activePalette=0;
-let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSizes:[],background:0,outliers:1}));
+let savedAdvanced=Array.from({length:3},()=>({weights:[],groupingSizes:[],seedRepulsion:2,outliers:0}));
 try{
 const blobSettings=JSON.parse(localStorage.getItem(paletteStorageKey));
-const stored=blobSettings || JSON.parse(localStorage.getItem('stormworks-stippler.palettes.v1'));
+const stored=blobSettings || JSON.parse(localStorage.getItem('stormworks-stippler.blob-palettes.v1')) || JSON.parse(localStorage.getItem('stormworks-stippler.palettes.v1'));
 if(stored && Array.isArray(stored.colors) && stored.colors.length===3 && stored.colors.every(c=>typeof c==='string' && c.length<=10000)){
 savedPalettes=stored.colors.map((colors,index)=>colors==='#62734D, #988563, #3C4934'?defaultPalettes[index]:colors);
 if(blobSettings && Array.isArray(stored.advanced) && stored.advanced.length===3){
 savedAdvanced=stored.advanced.map(value=>({
-weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&w>=0&&w<=100?w:45):[],
-groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=32?g:8):[],
-background:Number.isInteger(value?.background)&&value.background>=0?value.background:0,
-outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:1,
+weights:Array.isArray(value?.weights)?value.weights.map(w=>Number.isInteger(w)&&w>=0&&w<=100?w:8):[],
+groupingSizes:Array.isArray(value?.groupingSizes)?value.groupingSizes.map(g=>Number.isInteger(g)&&g>=1&&g<=512?g:24):[],
+seedRepulsion:Number.isFinite(value?.seedRepulsion)&&value.seedRepulsion>=0&&value.seedRepulsion<=10?value.seedRepulsion:2,
+outliers:Number.isFinite(value?.outliers)&&value.outliers>=0&&value.outliers<=10?value.outliers:0,
 }));
 }
 if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)activePalette=stored.active;
@@ -275,7 +328,7 @@ if(Number.isInteger(stored.active) && stored.active>=0 && stored.active<3)active
 paletteSelect.value=String(activePalette);replacements.value=savedPalettes[activePalette];
 function savePalettes(){
 savedPalettes[activePalette]=replacements.value;
-try{localStorage.setItem(paletteStorageKey,JSON.stringify({model:'blobs-v1',colors:savedPalettes,active:activePalette,advanced:savedAdvanced}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
+try{localStorage.setItem(paletteStorageKey,JSON.stringify({model:'seed-growth-v1',colors:savedPalettes,active:activePalette,advanced:savedAdvanced}));document.querySelector('#palette-storage').textContent='Palettes saved in this browser.';}
 catch{document.querySelector('#palette-storage').textContent='Browser storage is unavailable. Your palettes will last for this session only.';}
 }
 paletteSelect.addEventListener('input',()=>{
@@ -285,8 +338,8 @@ renderReplacementCards();savePalettes();
 });
 let paletteFile;
 const selectedColors=new Set();
-function conversionOptions(){normalizeAdvanced(activePalette);return {background:savedAdvanced[activePalette].background,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
-function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
+function conversionOptions(){normalizeAdvanced(activePalette);return {seedRepulsion:savedAdvanced[activePalette].seedRepulsion,outliers:savedAdvanced[activePalette].outliers,weights:savedAdvanced[activePalette].weights.slice(),groupingSizes:savedAdvanced[activePalette].groupingSizes.slice(),mode:mode.value,target:target.value,replacements:replacements.value.split(','),selectedColors:[...selectedColors]};}
+function syncMode(){document.querySelector('#replacement').hidden=mode.value!=='replace';document.querySelector('#vary-selection').hidden=mode.value==='replace';if(mode.value!=='replace')document.querySelector('#tile-map-preview').hidden=true;document.querySelector('#preview h2').textContent=mode.value==='replace'?'Selected color and common paints':'Selected paint colors';button.textContent=mode.value==='replace'?'Replace selected paint':'Vary selected paint';button.disabled=mode.value!=='replace'&&!selectedColors.size;for(const choice of document.querySelectorAll('.target-choice'))choice.setAttribute('aria-pressed',String(choice.dataset.color===target.value));}
 function renderVaryColors(colors){
 const list=document.querySelector('#vary-colors');list.replaceChildren();
 for(const item of colors){const label=document.createElement('label');label.className='target-choice';label.style.cursor='pointer';
@@ -313,7 +366,7 @@ const name=document.createElement('span');name.textContent=valid?'#'+normalized:
 editor.addEventListener('input',()=>{entries[index]=editor.value.toUpperCase();name.textContent=entries[index];savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderAdvanced();});
 editorLabel.append(editor,name);
 const remove=document.createElement('button');remove.type='button';remove.className='remove-color';remove.textContent='×';remove.setAttribute('aria-label','Remove Palette '+(paletteIndex+1)+' color '+(index+1));
-remove.addEventListener('click',()=>{normalizeAdvanced(paletteIndex);savedAdvanced[paletteIndex].weights.splice(index,1);savedAdvanced[paletteIndex].groupingSizes.splice(index,1);if(savedAdvanced[paletteIndex].background===index)savedAdvanced[paletteIndex].background=0;else if(savedAdvanced[paletteIndex].background>index)savedAdvanced[paletteIndex].background--;entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
+remove.addEventListener('click',()=>{normalizeAdvanced(paletteIndex);savedAdvanced[paletteIndex].weights.splice(index,1);savedAdvanced[paletteIndex].groupingSizes.splice(index,1);entries.splice(index,1);savedPalettes[paletteIndex]=entries.join(', ');if(paletteIndex===activePalette)replacements.value=savedPalettes[paletteIndex];savePalettes();renderReplacementCards();replacements.dispatchEvent(new Event('input',{bubbles:true}));});
 card.append(editorLabel,remove);column.append(card);});
 if(!entries.length){const empty=document.createElement('p');empty.textContent='No colors yet';column.append(empty);}
 list.append(column);
@@ -323,14 +376,13 @@ renderAdvanced();
 }
 function normalizeAdvanced(index){
 const entries=savedPalettes[index].split(',').map(c=>c.trim()).filter(Boolean);
-savedAdvanced[index].weights=entries.map((_,i)=>savedAdvanced[index].weights[i]??45);
-savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].groupingSizes[i]??8);
-if(savedAdvanced[index].background>=entries.length)savedAdvanced[index].background=0;
+savedAdvanced[index].weights=entries.map((_,i)=>savedAdvanced[index].weights[i]??8);
+savedAdvanced[index].groupingSizes=entries.map((_,i)=>savedAdvanced[index].groupingSizes[i]??24);
+
 }
 function updateFrequencySummary(){
-const settings=savedAdvanced[activePalette];
-for(const share of document.querySelectorAll('.frequency-share'))share.textContent=Number(share.dataset.index)===settings.background?'Base':savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'Density';
-document.querySelector('#frequency-summary').textContent='Frequency sets blob density, not a percentage of painted area. Large blobs can merge. No active blobs means background only.';
+for(const share of document.querySelectorAll('.frequency-share'))share.textContent=savedAdvanced[activePalette].weights[Number(share.dataset.index)]===0?'Off':'tiles';
+document.querySelector('#frequency-summary').textContent='Lowest-score valid seed wins. Larger spacing spreads seeds farther apart. Growth stops probabilistically as its connected region reaches the target size.';
 }
 
 function renderAdvanced(){
@@ -338,22 +390,21 @@ normalizeAdvanced(activePalette);
 document.querySelector('#advanced-palette').textContent='Settings for '+paletteNames[activePalette];
 const list=document.querySelector('#frequency-controls');list.replaceChildren();
 const entries=savedPalettes[activePalette].split(',').map(c=>c.trim()).filter(Boolean);
-const background=document.querySelector('#blob-background');background.replaceChildren();
-entries.forEach((color,index)=>{const option=document.createElement('option');option.value=String(index);option.textContent=color;background.append(option);});background.value=String(savedAdvanced[activePalette].background);
+document.querySelector('#seed-repulsion').value=String(savedAdvanced[activePalette].seedRepulsion);
 document.querySelector('#blob-outliers').value=String(savedAdvanced[activePalette].outliers);document.querySelector('#outliers-value').textContent=savedAdvanced[activePalette].outliers+'%';
 entries.forEach((color,index)=>{const row=document.createElement('div');row.className='frequency-row';
 const chip=document.createElement('span');chip.className='target-chip';chip.style.backgroundColor=color;
 const text=document.createElement('span');text.textContent=color;
-const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=String(savedAdvanced[activePalette].weights[index]);input.setAttribute('aria-label','Frequency of '+color);input.dataset.index=String(index);input.disabled=index===savedAdvanced[activePalette].background;
+const input=document.createElement('input');input.type='number';input.min='0';input.max='100';input.step='1';input.value=String(savedAdvanced[activePalette].weights[index]);input.setAttribute('aria-label','Seed spacing of '+color);input.dataset.index=String(index);
 const share=document.createElement('span');share.className='frequency-share';share.dataset.index=String(index);
 input.addEventListener('input',()=>{const value=Number(input.value);savedAdvanced[activePalette].weights[index]=Number.isFinite(value)?Math.max(0,Math.min(100,Math.round(value))):0;if(input.value!=='')input.value=String(savedAdvanced[activePalette].weights[index]);updateFrequencySummary();savePalettes();});
-const groupLabel=document.createElement('label');groupLabel.className='group-control';groupLabel.textContent='Blob size (blocks)';
-const group=document.createElement('input');group.type='number';group.min='1';group.max='32';group.step='1';group.value=String(savedAdvanced[activePalette].groupingSizes[index]);group.setAttribute('aria-label','Blob size of '+color);group.className='color-grouping';group.disabled=index===savedAdvanced[activePalette].background;
-group.addEventListener('input',()=>{const value=Number(group.value);savedAdvanced[activePalette].groupingSizes[index]=Number.isFinite(value)?Math.max(1,Math.min(32,Math.round(value))):1;if(group.value!=='')group.value=String(savedAdvanced[activePalette].groupingSizes[index]);savePalettes();});
+const groupLabel=document.createElement('label');groupLabel.className='group-control';groupLabel.textContent='Blob size (connected tiles)';
+const group=document.createElement('input');group.type='number';group.min='1';group.max='512';group.step='1';group.value=String(savedAdvanced[activePalette].groupingSizes[index]);group.setAttribute('aria-label','Blob size of '+color);group.className='color-grouping';
+group.addEventListener('input',()=>{const value=Number(group.value);savedAdvanced[activePalette].groupingSizes[index]=Number.isFinite(value)?Math.max(1,Math.min(512,Math.round(value))):1;if(group.value!=='')group.value=String(savedAdvanced[activePalette].groupingSizes[index]);savePalettes();});
 groupLabel.append(group);row.append(chip,text,input,share,groupLabel);list.append(row);});updateFrequencySummary();
 }
 
-document.querySelector('#blob-background').addEventListener('input',event=>{savedAdvanced[activePalette].background=Number(event.target.value);renderAdvanced();savePalettes();});
+document.querySelector('#seed-repulsion').addEventListener('input',event=>{const value=Number(event.target.value);savedAdvanced[activePalette].seedRepulsion=Number.isFinite(value)?Math.max(0,Math.min(10,value)):2;savePalettes();});
 document.querySelector('#blob-outliers').addEventListener('input',event=>{savedAdvanced[activePalette].outliers=Number(event.target.value);document.querySelector('#outliers-value').textContent=event.target.value+'%';savePalettes();});
 replacements.addEventListener('input',()=>{renderReplacementCards();savePalettes();});
 renderReplacementCards();
@@ -379,6 +430,39 @@ const mosaic=document.createElement('div');mosaic.className='mosaic'+(item.sampl
 for(const color of item.samples){const tile=document.createElement('span');tile.style.backgroundColor='#'+color;tile.title='#'+color;mosaic.append(tile);}
 card.append(name,count,originalLabel,original,label,mosaic);palette.append(card);
 }}
+let currentPaintMap=[];
+function drawTileSlice(){
+const layer=currentPaintMap[Number(document.querySelector('#tile-layer').value)];if(!layer)return;
+const axis=Number(document.querySelector('#tile-axis').value),position=Number(document.querySelector('#tile-slice').value);
+const remaining=[0,1,2].filter(value=>value!==axis),tiles=layer.tiles.filter(tile=>tile.xyz&&tile.xyz[axis]===position);
+const canvas=document.querySelector('#tile-canvas'),ctx=canvas.getContext('2d');ctx.fillStyle='#10191e';ctx.fillRect(0,0,canvas.width,canvas.height);
+if(!tiles.length)return;
+const u=remaining[0],v=remaining[1],bounds=tiles.reduce((b,t)=>[Math.min(b[0],t.xyz[u]),Math.max(b[1],t.xyz[u]),Math.min(b[2],t.xyz[v]),Math.max(b[3],t.xyz[v])],[Infinity,-Infinity,Infinity,-Infinity]);const [minU,maxU,minV,maxV]=bounds;
+const size=Math.min((canvas.width-24)/(maxU-minU+1),(canvas.height-24)/(maxV-minV+1));
+const left=(canvas.width-(maxU-minU+1)*size)/2,top=(canvas.height-(maxV-minV+1)*size)/2;
+for(const tile of tiles){const x=left+(tile.xyz[u]-minU)*size,y=top+(maxV-tile.xyz[v])*size;ctx.fillStyle='#'+tile.color;ctx.fillRect(x,y,Math.max(1,size-(size>=6?1:0)),Math.max(1,size-(size>=6?1:0)));if(tile.seed&&size>=5){ctx.beginPath();ctx.arc(x+size/2,y+size/2,Math.max(1,size*0.12),0,Math.PI*2);ctx.fillStyle='#10191e';ctx.fill();ctx.strokeStyle='#ffffff';ctx.lineWidth=1;ctx.stroke();}}
+const missing=layer.tiles.filter(tile=>!tile.xyz).length;
+document.querySelector('#tile-map-summary').textContent=tiles.length+' tiles in this slice · '+layer.seeds+' seeds in this layer · axes '+['X','Y','Z'][u]+'/'+['X','Y','Z'][v]+(missing?' · '+missing+' isolated tiles have no position':'');
+}
+function updateSliceChoices(){
+const layer=currentPaintMap[Number(document.querySelector('#tile-layer').value)];if(!layer)return;
+const axis=Number(document.querySelector('#tile-axis').value),select=document.querySelector('#tile-slice'),old=select.value;
+const positions=[...new Set(layer.tiles.filter(tile=>tile.xyz).map(tile=>tile.xyz[axis]))].sort((a,b)=>a-b);select.replaceChildren();
+for(const value of positions){const option=document.createElement('option');option.value=String(value);option.textContent=String(value);select.append(option);}
+select.value=positions.includes(Number(old))?old:String(positions[Math.floor(positions.length/2)]);drawTileSlice();
+}
+function renderTileMap(data){
+const select=document.querySelector('#tile-layer'),previous=currentPaintMap[Number(select.value)];
+currentPaintMap=(data.tileMap||[]).filter(layer=>layer.tiles.some(tile=>tile.xyz));
+const panel=document.querySelector('#tile-map-preview');panel.hidden=mode.value!=='replace'||!currentPaintMap.length;if(panel.hidden)return;
+let selected=previous?currentPaintMap.findIndex(layer=>layer.body===previous.body&&layer.layer===previous.layer):-1;
+if(selected<0){const bases=currentPaintMap.map((layer,index)=>({layer,index})).filter(item=>item.layer.layer==='bc:0');const candidates=bases.length?bases:currentPaintMap.map((layer,index)=>({layer,index}));selected=candidates.reduce((best,item)=>item.layer.tiles.length>best.layer.tiles.length?item:best).index;}
+select.replaceChildren();currentPaintMap.forEach((layer,index)=>{const option=document.createElement('option');option.value=String(index);option.textContent='Body '+layer.body+' / '+layer.layer+' ('+layer.tiles.length+' tiles)';select.append(option);});
+select.value=String(selected);updateSliceChoices();
+}
+
+for(const id of ['tile-layer','tile-axis'])document.querySelector('#'+id).addEventListener('input',event=>{event.stopPropagation();updateSliceChoices();});
+document.querySelector('#tile-slice').addEventListener('input',event=>{event.stopPropagation();drawTileSlice();});
 async function updatePreview(version){
 const selected=file.files[0];if(!selected)return;
 try{
@@ -394,11 +478,11 @@ selectedColors.clear();renderVaryColors(original.colors);
 paletteFile=selected;
 }
 const data=stippleVehicle(source,settings.strength,settings.seed,conversionOptions());if(version!==previewVersion)return;
-renderPreview(data.preview);syncMode();previewStatus.textContent=mode.value!=='replace'&&!selectedColors.size?'Select colors above to see their previews.':'';
-}catch(error){if(version===previewVersion){palette.replaceChildren();previewStatus.textContent=error.message;}}
+renderPreview(data.preview);renderTileMap(data);syncMode();previewStatus.textContent=mode.value!=='replace'&&!selectedColors.size?'Select colors above to see their previews.':'';
+}catch(error){if(version===previewVersion){palette.replaceChildren();document.querySelector('#tile-map-preview').hidden=true;previewStatus.textContent=error.message;}}
 }
 form.addEventListener('input',event=>{
-if(event.target===file){selectedColors.clear();paletteFile=null;document.querySelector('#vary-colors').replaceChildren();palette.replaceChildren();}
+if(event.target===file){selectedColors.clear();paletteFile=null;document.querySelector('#vary-colors').replaceChildren();palette.replaceChildren();document.querySelector('#tile-map-preview').hidden=true;}
 syncMode();
 clearTimeout(previewTimer);const version=++previewVersion;
 preview.hidden=!file.files.length;previewStatus.textContent='';
@@ -413,7 +497,7 @@ if(mode.value!=='replace'&&!selectedColors.size){status.textContent='Select at l
 if(selected.size>19*1024*1024){status.textContent='Choose an XML file smaller than 19 MB.';return;}
 button.disabled=true;status.textContent='Adding paint variation…';
 const version=previewVersion;
-try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`)+(mode.value==='replace'&&data.unpositioned_objects?` ${data.unpositioned_objects} objects have no usable positions; those use scattered palette colors.`:'');}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
+try{const data=stippleVehicle(await readFile(selected),Number(strength.value),Number(seed.value),conversionOptions());if(version!==previewVersion)return;url=URL.createObjectURL(new Blob([data.xml],{type:'application/xml;charset=utf-8'}));download.href=url;download.download=selected.name.replace(/\.xml$/i,'')+(mode.value==='replace'?'-repainted.xml':'-stippled.xml');download.hidden=false;status.textContent=`Ready: ${data.changed_fields} paint fields changed`+(mode.value==='replace'?` out of ${data.matched_fields} matching fields.`:` across ${data.objects} painted objects.`)+(mode.value==='replace'&&data.unpositioned_objects?` ${data.unpositioned_objects} objects have no usable positions; their paint slots are treated as isolated tiles.`:'');}catch(error){if(version===previewVersion)status.textContent=error.message;}finally{syncMode();}
 });
 syncMode();
 </script>
